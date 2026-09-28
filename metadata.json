@@ -1,0 +1,11 @@
+{
+  "name": "SmartBow AI — Clinical Jaw Relation & Articulator System",
+  "description": "Smartphone & computer vision dental jaw relation recording system replacing facebow, gothic arch, and Willis gauge with MediaPipe face mesh and dual ArUco tracking.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
+
