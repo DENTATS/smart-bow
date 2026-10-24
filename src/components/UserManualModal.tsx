@@ -32,13 +32,17 @@ import {
   Sliders,
   Check,
   Award,
-  RotateCcw
+  RotateCcw,
+  Gauge
 } from 'lucide-react';
 import { 
   MARKER_PASTING_GUIDELINES, 
   JAW_KINEMATIC_DOCTRINES, 
-  VDO_CHECKPOINTS 
+  VDO_CHECKPOINTS,
+  SOURCED_RIM_DATUMS
 } from '../lib/prosthodonticLiterature';
+import { CAD_BOARD_SPECIFICATION } from '../lib/arucoDict';
+import { OPTICAL_DIAGNOSTIC_DEFINITIONS } from '../lib/opticalDiagnostics';
 
 interface UserManualModalProps {
   isOpen: boolean;
@@ -47,6 +51,10 @@ interface UserManualModalProps {
 }
 
 type SectionKey = 
+  | 'quick_start'
+  | 'print_checklist'
+  | 'cad_rim_datums'
+  | 'optical_diagnostics'
   | 'overview' 
   | 'marker_placement' 
   | 'dentulous'
@@ -63,7 +71,8 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
   onClose,
   onNavigateToTab,
 }) => {
-  const [activeSection, setActiveSection] = useState<SectionKey>('marker_placement');
+  const [activeSection, setActiveSection] = useState<SectionKey>('quick_start');
+  const [quickStartPage, setQuickStartPage] = useState<1 | 2 | 3 | 4>(1);
 
   if (!isOpen) return null;
 
@@ -110,7 +119,51 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
         </div>
 
         {/* Horizontal Navigation Pills */}
-        <div className="flex items-center gap-1 px-6 py-2.5 bg-slate-950/60 border-b border-slate-800 overflow-x-auto text-xs font-medium no-print">
+        <div className="flex items-center gap-1.5 px-6 py-2.5 bg-slate-950/60 border-b border-slate-800 overflow-x-auto text-xs font-medium no-print">
+          <button
+            onClick={() => setActiveSection('quick_start')}
+            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+              activeSection === 'quick_start'
+                ? 'bg-cyan-500 text-slate-950 font-bold shadow-sm'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>★ Quick-Start (4-Page)</span>
+          </button>
+          <button
+            onClick={() => setActiveSection('print_checklist')}
+            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+              activeSection === 'print_checklist'
+                ? 'bg-cyan-500 text-slate-950 font-bold shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span>Print Checklist</span>
+          </button>
+          <button
+            onClick={() => setActiveSection('cad_rim_datums')}
+            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+              activeSection === 'cad_rim_datums'
+                ? 'bg-cyan-500 text-slate-950 font-bold shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <Box className="w-3.5 h-3.5" />
+            <span>CAD &amp; Rim Datums</span>
+          </button>
+          <button
+            onClick={() => setActiveSection('optical_diagnostics')}
+            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+              activeSection === 'optical_diagnostics'
+                ? 'bg-cyan-500 text-slate-950 font-bold shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <Gauge className="w-3.5 h-3.5" />
+            <span>10-State Optical Diagnostics</span>
+          </button>
           <button
             onClick={() => setActiveSection('overview')}
             className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
@@ -149,7 +202,7 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            4. Jaw Kinematic Control &amp; Literature
+            4. Jaw Kinematics
           </button>
           <button
             onClick={() => setActiveSection('vdo_checkpoints')}
@@ -159,7 +212,7 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            4. VDO Clinical Checkpoints
+            5. VDO Checkpoints
           </button>
           <button
             onClick={() => setActiveSection('stepbystep')}
@@ -169,7 +222,7 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            5. Chairside Step-by-Step
+            6. Chairside SOP
           </button>
           <button
             onClick={() => setActiveSection('gothic')}
@@ -179,7 +232,7 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            6. Gothic Arch
+            7. Gothic Arch
           </button>
           <button
             onClick={() => setActiveSection('cr')}
@@ -189,7 +242,7 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            7. CR Repeatability
+            8. CR Repeatability
           </button>
           <button
             onClick={() => setActiveSection('articulator')}
@@ -199,7 +252,7 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            8. 3D Articulator & STL
+            9. 3D Articulator &amp; STL
           </button>
           <button
             onClick={() => setActiveSection('troubleshooting')}
@@ -209,13 +262,394 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            9. Troubleshooting
+            10. Troubleshooting
           </button>
         </div>
 
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6 text-sm">
           
+          {/* RESEARCH PROTOTYPE DISCLAIMER BANNER */}
+          <div className="bg-amber-950/40 border border-amber-600/50 rounded-xl p-3.5 text-xs text-amber-200 flex items-start gap-3">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <span className="font-bold uppercase tracking-wider text-amber-300">
+                Experimental Research Prototype Notice
+              </span>
+              <p className="text-amber-200/90 leading-relaxed font-sans">
+                SmartBow is an experimental jaw-relation and facebow-related measurement research prototype. It is <strong>NOT</strong> a clinically validated medical device. Numerical readings must be verified chairside against conventional prosthodontic checkpoints (Silverman phonetic speaking space, Niswonger physiological rest, and tactile lip posture).
+              </p>
+            </div>
+          </div>
+
+          {/* SECTION: 4-PAGE QUICK START GUIDE */}
+          {activeSection === 'quick_start' && (
+            <div className="space-y-6">
+              {/* Quick-Start Page Navigation */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono uppercase text-cyan-400 font-bold">Quick-Start Step:</span>
+                  <div className="flex items-center gap-1">
+                    {[1, 2, 3, 4].map(pg => (
+                      <button
+                        key={pg}
+                        onClick={() => setQuickStartPage(pg as any)}
+                        className={`px-3 py-1 rounded text-xs font-mono transition-colors cursor-pointer ${
+                          quickStartPage === pg
+                            ? 'bg-cyan-500 text-slate-950 font-bold'
+                            : 'bg-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Page {pg}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => window.print()}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono border border-slate-700 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Print This Guide</span>
+                </button>
+              </div>
+
+              {quickStartPage === 1 && (
+                <div className="space-y-4">
+                  <div className="border border-slate-800 bg-slate-950 rounded-xl p-5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-mono text-cyan-400 font-bold uppercase">Page 1 of 4</span>
+                      <span className="text-xs font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">
+                        Zero-Scale Metrology
+                      </span>
+                    </div>
+                    <h3 className="text-base font-bold text-white">Print &amp; Caliper Measurement Verification</h3>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      To ensure accurate optical pose estimation, print the A4 marker sheet at exactly 100% actual size. Modern PDF readers and browsers frequently default to &quot;Fit to Page&quot; or &quot;Shrink to Printable Area&quot;, which introduces fatal scaling errors.
+                    </p>
+
+                    <div className="p-4 bg-slate-900 rounded-lg border border-slate-800 space-y-2 font-mono text-xs">
+                      <div className="text-cyan-300 font-bold uppercase">Required Calibration Protocol:</div>
+                      <ol className="list-decimal pl-5 space-y-1.5 text-slate-300 font-sans text-xs">
+                        <li>Open the <strong>Physical Markers</strong> dialog in SmartBow and click <strong>Print A4 Sheet</strong>.</li>
+                        <li>In your operating system print dialog, set <strong>Scale to 100% / Actual Size</strong>.</li>
+                        <li>Use a calibrated digital vernier caliper (0.01 mm resolution) to measure the 100 mm scale check bar.</li>
+                        <li><strong>Pass Criterion:</strong> Reading must be strictly between <strong>99.80 mm and 100.20 mm</strong>.</li>
+                        <li>Measure individual ArUco squares: each must measure exactly <strong>6.50 ± 0.05 mm</strong>.</li>
+                      </ol>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {quickStartPage === 2 && (
+                <div className="space-y-4">
+                  <div className="border border-slate-800 bg-slate-950 rounded-xl p-5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-mono text-cyan-400 font-bold uppercase">Page 2 of 4</span>
+                      <span className="text-xs font-mono text-cyan-400 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-800">
+                        CAD Substrate Assembly
+                      </span>
+                    </div>
+                    <h3 className="text-base font-bold text-white">18×18mm Acrylic Marker Board Assembly</h3>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      The miniature optical targets consist of 4 OpenCV ArUco DICT_4X4_50 markers mounted on a rigid clear acrylic carrier.
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 bg-slate-900 rounded-lg border border-slate-800 space-y-2 text-xs">
+                        <span className="font-bold text-white font-mono uppercase block text-cyan-400">Board Dimensions:</span>
+                        <ul className="space-y-1 text-slate-300">
+                          <li>• <strong>Substrate:</strong> 18.0 × 18.0 × 3.0 mm clear PMMA acrylic</li>
+                          <li>• <strong>Array Outer Span:</strong> 14.0 × 14.0 mm</li>
+                          <li>• <strong>Marker Size:</strong> 6.5 × 6.5 mm per fiducial (solid black border)</li>
+                          <li>• <strong>Center-to-Center Pitch:</strong> 7.50 mm</li>
+                          <li>• <strong>Edge Margins:</strong> 2.0 mm border all around</li>
+                          <li>• <strong>Mucosal Relief:</strong> 0.5 mm 45° edge chamfer</li>
+                        </ul>
+                      </div>
+
+                      <div className="p-4 bg-slate-900 rounded-lg border border-slate-800 space-y-2 text-xs">
+                        <span className="font-bold text-white font-mono uppercase block text-emerald-400">Marker ID Roles:</span>
+                        <ul className="space-y-1 text-slate-300">
+                          <li>• <strong>Maxillary Board:</strong> IDs 3, 4, 5, 6 (Right Premolar)</li>
+                          <li>• <strong>Mandibular Board:</strong> IDs 7, 8, 9, 10 (Right Premolar)</li>
+                          <li>• <strong>Facial Reference:</strong> Landmark nodes 10, 234, 454 (Glabella &amp; Zygomas)</li>
+                          <li>• <strong>Adhesive:</strong> Thin medical cyanoacrylate + clear UV moisture barrier</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {quickStartPage === 3 && (
+                <div className="space-y-4">
+                  <div className="border border-slate-800 bg-slate-950 rounded-xl p-5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-mono text-cyan-400 font-bold uppercase">Page 3 of 4</span>
+                      <span className="text-xs font-mono text-amber-400 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-800">
+                        Prosthodontic Rim Datums
+                      </span>
+                    </div>
+                    <h3 className="text-base font-bold text-white">Wax Rim Baseline &amp; Physical Mounting</h3>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      Construct complete denture wax occlusal rims to standard Boucher / Winkler anatomical starting references. Remember: these are construction guidelines, not universal patient absolutes.
+                    </p>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs font-mono border border-slate-800">
+                        <thead className="bg-slate-900 text-slate-300">
+                          <tr>
+                            <th className="p-2 border-b border-slate-800">Parameter</th>
+                            <th className="p-2 border-b border-slate-800">Starting Reference</th>
+                            <th className="p-2 border-b border-slate-800">Literature Source</th>
+                            <th className="p-2 border-b border-slate-800">Clinical Adjustment</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                          <tr>
+                            <td className="p-2 font-bold text-white">Maxillary Ant. Height</td>
+                            <td className="p-2 text-cyan-400">20.0 – 22.0 mm</td>
+                            <td className="p-2 text-slate-400">Boucher 12th ed., p. 248</td>
+                            <td className="p-2 font-sans text-[11px]">Adjust to show 1–2 mm below resting lip line.</td>
+                          </tr>
+                          <tr>
+                            <td className="p-2 font-bold text-white">Maxillary Post. Height</td>
+                            <td className="p-2 text-cyan-400">8.0 – 10.0 mm</td>
+                            <td className="p-2 text-slate-400">Boucher 12th ed., p. 249</td>
+                            <td className="p-2 font-sans text-[11px]">Parallel to Camper&apos;s line (ala-tragus plane).</td>
+                          </tr>
+                          <tr>
+                            <td className="p-2 font-bold text-white">Mandibular Ant. Height</td>
+                            <td className="p-2 text-cyan-400">16.0 – 18.0 mm</td>
+                            <td className="p-2 text-slate-400">Boucher 12th ed., p. 252</td>
+                            <td className="p-2 font-sans text-[11px]">Flush with resting lower lip; check speaking space.</td>
+                          </tr>
+                          <tr>
+                            <td className="p-2 font-bold text-white">Mandibular Post. Height</td>
+                            <td className="p-2 text-emerald-400">Junction mid/upper 1/3 Retromolar Pad</td>
+                            <td className="p-2 text-slate-400">Boucher 12th ed., p. 253; Wright CR</td>
+                            <td className="p-2 font-sans text-[11px]">Melt wax rim flat to junction of pear-shaped pad.</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {quickStartPage === 4 && (
+                <div className="space-y-4">
+                  <div className="border border-slate-800 bg-slate-950 rounded-xl p-5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-mono text-cyan-400 font-bold uppercase">Page 4 of 4</span>
+                      <span className="text-xs font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">
+                        Clinical Execution
+                      </span>
+                    </div>
+                    <h3 className="text-base font-bold text-white">Camera Positioning &amp; 10-State Optical Diagnostics</h3>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      Hold the camera 35–50 cm from the patient at occlusal plane level, angled 30°–45° anterolaterally to view both facial landmarks and the buccal marker targets.
+                    </p>
+
+                    <div className="p-4 bg-slate-900 rounded-lg border border-slate-800 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded-full bg-emerald-400" />
+                        <span className="font-bold text-emerald-300 font-mono text-xs">
+                          Target State: READY_FOR_ENGINEERING_TEST
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-300 font-sans">
+                        Recording is gated and strictly enabled only when all optical prerequisites are met. If any marker or landmark is occluded, the diagnostic banner provides instant actionable feedback (e.g. &quot;Retract right buccal cheek&quot; or &quot;Hold camera steady&quot;).
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SECTION: PRINT & METROLOGY CHECKLIST */}
+          {activeSection === 'print_checklist' && (
+            <div className="space-y-6">
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div>
+                    <h3 className="text-base font-bold text-white">Single-Page Print &amp; Metrology Checklist</h3>
+                    <p className="text-xs text-slate-400 font-mono">Reference: SB-CHK-01-REV-B</p>
+                  </div>
+                  <button
+                    onClick={() => window.print()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono border border-slate-700 cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Print Checklist Sheet</span>
+                  </button>
+                </div>
+
+                <div className="space-y-3 text-xs">
+                  <div className="p-3 bg-slate-900/80 rounded-lg border border-slate-800">
+                    <span className="font-bold text-cyan-400 font-mono uppercase block mb-1">Phase A: Print Setup</span>
+                    <p className="text-slate-300 mb-2">120–160 gsm heavy matte paper or synthetic polyester sheet. Print at 100% actual size without borderless zoom or page fitting.</p>
+                  </div>
+
+                  <div className="p-3 bg-slate-900/80 rounded-lg border border-slate-800">
+                    <span className="font-bold text-cyan-400 font-mono uppercase block mb-1">Phase B: Caliper Verification Criteria</span>
+                    <ul className="space-y-1 text-slate-300 font-mono">
+                      <li>• [ ] 100.0 mm Check Bar: <strong>100.00 ± 0.20 mm</strong></li>
+                      <li>• [ ] Individual ArUco Square: <strong>6.50 ± 0.05 mm</strong></li>
+                      <li>• [ ] Array Outer Span: <strong>14.00 ± 0.10 mm</strong></li>
+                      <li>• [ ] Center Pitch (M3 to M4): <strong>7.50 ± 0.05 mm</strong></li>
+                    </ul>
+                  </div>
+
+                  <div className="p-3 bg-slate-900/80 rounded-lg border border-slate-800">
+                    <span className="font-bold text-cyan-400 font-mono uppercase block mb-1">Phase C: Optical &amp; Polarity Inspection</span>
+                    <ul className="space-y-1 text-slate-300">
+                      <li>• [ ] Solid 1-bit black enclosing border present on all 4 markers</li>
+                      <li>• [ ] Correct binary bit polarity (DICT_4X4_50 layout, bit 0 black, bit 1 white)</li>
+                      <li>• [ ] Human labels positioned strictly outside the quiet zone</li>
+                      <li>• [ ] No JPEG compression ringing or blur on high-contrast bit transitions</li>
+                    </ul>
+                  </div>
+
+                  <div className="p-3 bg-slate-900/80 rounded-lg border border-slate-800">
+                    <span className="font-bold text-cyan-400 font-mono uppercase block mb-1">Phase D: Chairside Sign-Off</span>
+                    <p className="text-slate-300">
+                      All criteria passed. Toggle &quot;100mm Scale: Verified&quot; in the Live Scanner HUD before recording trials.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SECTION: CAD SPECIFICATION & RIM DATUMS */}
+          {activeSection === 'cad_rim_datums' && (
+            <div className="space-y-6">
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 space-y-4">
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Box className="w-4 h-4 text-cyan-400" />
+                  <span>Sourced Rim Construction References (Boucher &amp; Winkler)</span>
+                </h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Dimensional reconciliation establishes that stated rim dimensions in classic prosthodontic texts are <strong>starting construction guidelines</strong>, not rigid anatomical constants. Every value must be adapted to individual patient aesthetics and phonetics.
+                </p>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs font-mono border border-slate-800">
+                    <thead className="bg-slate-900 text-slate-300">
+                      <tr>
+                        <th className="p-2.5 border-b border-slate-800">Parameter</th>
+                        <th className="p-2.5 border-b border-slate-800">Reference Datum</th>
+                        <th className="p-2.5 border-b border-slate-800">Literature Source</th>
+                        <th className="p-2.5 border-b border-slate-800">Nature of Dimension</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {Object.values(SOURCED_RIM_DATUMS).map(datum => (
+                        <tr key={datum.id} className="hover:bg-slate-900/50">
+                          <td className="p-2.5 font-bold text-white">{datum.parameter}</td>
+                          <td className="p-2.5 text-cyan-400 font-bold">{datum.constructionReferenceMm}</td>
+                          <td className="p-2.5 text-slate-400 text-[11px]">{datum.sourceCitation}</td>
+                          <td className="p-2.5">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800">
+                              Construction Reference (Not Constant)
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 18x18mm CAD Plate Specification Breakdown */}
+                <div className="mt-6 p-4 bg-slate-900 rounded-xl border border-slate-800 space-y-3 font-mono text-xs">
+                  <span className="font-bold text-white uppercase text-cyan-400 block">
+                    18.0 × 18.0 × 3.0 mm Carrier Plate Mechanical CAD Drawing
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-slate-300">
+                    <div>
+                      <span className="text-slate-400 block">Plate Dimensions:</span>
+                      <strong className="text-white">18.00 × 18.00 × 3.00 mm (PMMA Acrylic)</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block">Marker Squares:</span>
+                      <strong className="text-white">6.50 × 6.50 mm (2 × 2 array)</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block">Center-to-Center Pitch:</span>
+                      <strong className="text-white">7.50 mm</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block">Array Outer Span:</span>
+                      <strong className="text-white">14.00 × 14.00 mm</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block">Edge Margins:</span>
+                      <strong className="text-white">2.00 mm all around</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block">Mucosal Safety Relief:</span>
+                      <strong className="text-white">0.50 mm × 45° chamfer</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SECTION: 10-STATE OPTICAL DIAGNOSTIC GUIDE */}
+          {activeSection === 'optical_diagnostics' && (
+            <div className="space-y-6">
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div>
+                    <h3 className="text-base font-bold text-white">10-State Optical Diagnostic State Machine</h3>
+                    <p className="text-xs text-slate-400">Replaces ambiguous &quot;Mode: none&quot; with actionable clinical guidance</p>
+                  </div>
+                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
+                    Phase 1B Specification
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  {Object.entries(OPTICAL_DIAGNOSTIC_DEFINITIONS).map(([stateKey, def]) => (
+                    <div 
+                      key={stateKey}
+                      className={`p-3.5 rounded-xl border text-xs font-mono space-y-1.5 ${
+                        def.severity === 'READY'
+                          ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200'
+                          : def.severity === 'ERROR'
+                          ? 'bg-rose-950/40 border-rose-500/50 text-rose-200'
+                          : 'bg-amber-950/40 border-amber-500/50 text-amber-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-sm text-white">{def.title}</span>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                          def.severity === 'READY' ? 'bg-emerald-900 text-emerald-300' : 'bg-slate-800 text-slate-300'
+                        }`}>
+                          {stateKey}
+                        </span>
+                      </div>
+                      <p className="text-xs font-sans text-slate-300 leading-snug">
+                        <strong>Actionable Guidance:</strong> {def.actionableGuidance}
+                      </p>
+                      {def.missingPrerequisites.length > 0 && (
+                        <div className="text-[11px] text-slate-400">
+                          <strong>Missing Prerequisite:</strong> {def.missingPrerequisites.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* SECTION 1: SYSTEM OVERVIEW */}
           {activeSection === 'overview' && (
             <div className="space-y-6">

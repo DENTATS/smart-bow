@@ -184,10 +184,13 @@ export const VirtualArticulator3D: React.FC<VirtualArticulator3DProps> = ({
     // Positioned according to patient's VDO and occlusal plane tilts
     const maxZOffset = 20;
     const maxYOffset = -38;
-    upperCastGroup.position.set(m.midlineShiftMm * 0.5, maxYOffset, 42);
+    const midline = m.midlineShiftMm ?? 0;
+    const tiltML = m.occlusalTiltMLDeg ?? 0;
+    const tiltAP = m.occlusalTiltAPDeg ?? 0;
+    upperCastGroup.position.set(midline * 0.5, maxYOffset, 42);
     // Apply ML and AP tilts
-    upperCastGroup.rotation.z = -(m.occlusalTiltMLDeg * Math.PI) / 180;
-    upperCastGroup.rotation.x = (m.occlusalTiltAPDeg * Math.PI) / 180;
+    upperCastGroup.rotation.z = -(tiltML * Math.PI) / 180;
+    upperCastGroup.rotation.x = (tiltAP * Math.PI) / 180;
 
     const maxCastBase = new THREE.Mesh(new THREE.CylinderGeometry(28, 26, 12, 32), castMatUpper);
     upperCastGroup.add(maxCastBase);
@@ -252,7 +255,8 @@ export const VirtualArticulator3D: React.FC<VirtualArticulator3DProps> = ({
       } else {
         upperHingePivot.rotation.x = (openingAngleDeg * Math.PI) / 180;
         upperHingePivot.position.z = -25 + protrusionMm;
-        upperHingePivot.position.y = 78 - (protrusionMm * Math.tan((m.sciEstimateDeg * Math.PI) / 180) * 0.5);
+        const safeSci = m.sciEstimateDeg ?? 30;
+        upperHingePivot.position.y = 78 - (protrusionMm * Math.tan((safeSci * Math.PI) / 180) * 0.5);
       }
 
       jigGroup.visible = showJig;

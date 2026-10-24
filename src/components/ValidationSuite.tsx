@@ -25,13 +25,14 @@ import {
   FileSpreadsheet
 } from 'lucide-react';
 import { ValidationBenchTest } from '../types/smartbow';
-import { computeStatistics, exportValidationCsv, generateInitialValidationDataset } from '../lib/validationEngine';
+import { computeStatistics, exportValidationCsv, generateSimulatedDemoValidationDataset } from '../lib/validationEngine';
 
 type BriefingTab = 'q1' | 'q2' | 'matrix' | 'cost' | 'limits';
 
 export const ValidationSuite: React.FC = () => {
   const [activeTab, setActiveTab] = useState<BriefingTab>('q1');
-  const [tests, setTests] = useState<ValidationBenchTest[]>(() => generateInitialValidationDataset());
+  // SAFETY RULE: Initial physical validation state has ZERO physical records until entered.
+  const [tests, setTests] = useState<ValidationBenchTest[]>([]);
   
   // Selected benchmark protocol in the validation engine
   const [selectedType, setSelectedType] = useState<
@@ -128,9 +129,18 @@ export const ValidationSuite: React.FC = () => {
       passed: err < currentTarget.threshold,
       repNumber: filteredTests.length + 1,
       notes: notesInput || 'Bench verification repetition',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      provenance: 'MEASURED'
     };
     setTests([newTest, ...tests]);
+  };
+
+  const handleLoadDemoDataset = () => {
+    setTests(generateSimulatedDemoValidationDataset());
+  };
+
+  const handleClearDataset = () => {
+    setTests([]);
   };
 
   const handleExportCsv = () => {
@@ -632,7 +642,7 @@ export const ValidationSuite: React.FC = () => {
                 <div>• Positions: 50, 55, 60, 65, 70 mm (full clinical range)</div>
                 <div>• Sample Size: 30 repetitions per height (n = 150)</div>
                 <div>• Pass Criterion: Mean Absolute Error &lt; 0.5 mm, SD &lt; 0.3 mm</div>
-                <div className="text-teal-400">• Current Bench Score: 0.14 mm MAE (PASSED ✓)</div>
+                <div className="text-amber-400">• Bench Status: NO PHYSICAL VALIDATION DATA RECORDED (Pending Stage 1 Caliper Trial)</div>
               </div>
             </div>
 
@@ -656,7 +666,7 @@ export const ValidationSuite: React.FC = () => {
                 <div>• Test Angles: 0°, 5°, 10°, 15° (ML and AP axes)</div>
                 <div>• Sample Size: 20 repetitions per angle (n = 80)</div>
                 <div>• Pass Criterion: Mean Error &lt; 1.0°, SD &lt; 0.5°</div>
-                <div className="text-cyan-400">• Current Bench Score: 0.38° MAE (PASSED ✓)</div>
+                <div className="text-amber-400">• Bench Status: NO PHYSICAL VALIDATION DATA RECORDED (Pending Stage 1 Protractor Trial)</div>
               </div>
             </div>
 
@@ -679,7 +689,7 @@ export const ValidationSuite: React.FC = () => {
                 <div>• Test 1: Fixed acrylic bite block × 10 repetitions</div>
                 <div>• Test 2: Deliberate 2.0 mm anterior/lateral offset</div>
                 <div>• Pass Criterion: True repeat SD &lt; 0.3 mm; 100% detection of 2mm shift</div>
-                <div className="text-purple-400">• Current Bench Score: 0.16 mm SD (PASSED ✓)</div>
+                <div className="text-amber-400">• Bench Status: NO PHYSICAL VALIDATION DATA RECORDED (Pending Physical Bite Block Trial)</div>
               </div>
             </div>
 
@@ -703,7 +713,7 @@ export const ValidationSuite: React.FC = () => {
                 <div>• Test Model: Phantom jaw (no patient ethics needed)</div>
                 <div>• Pass Criterion: RMS difference &lt; 0.5 mm linear, &lt; 2.0° angular</div>
                 <div>• Target Publication: Journal of Prosthetic Dentistry / IJPRD</div>
-                <div className="text-amber-400">• Current Score: 0.22 mm RMS (PASSED ✓)</div>
+                <div className="text-amber-400">• Bench Status: NO PHYSICAL ZEBRIS COMPARATIVE DATA RECORDED</div>
               </div>
             </div>
           </div>
@@ -864,8 +874,23 @@ export const ValidationSuite: React.FC = () => {
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-mono text-slate-400">Total trials in dataset: {tests.length}</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-mono text-slate-400">Total trials: {tests.length}</span>
+                <button
+                  onClick={handleLoadDemoDataset}
+                  className="px-2.5 py-1 text-xs font-mono font-semibold bg-amber-950/70 hover:bg-amber-900 border border-amber-600/60 text-amber-300 rounded-lg transition-colors cursor-pointer"
+                  title="Load synthetic demonstration dataset (marked SIMULATED)"
+                >
+                  Load Simulated Demo
+                </button>
+                {tests.length > 0 && (
+                  <button
+                    onClick={handleClearDataset}
+                    className="px-2.5 py-1 text-xs font-mono font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Clear All
+                  </button>
+                )}
               </div>
             </div>
 
@@ -926,8 +951,14 @@ export const ValidationSuite: React.FC = () => {
                   Mean Absolute Error (MAE)
                 </span>
                 <div className="mt-3 flex items-baseline gap-1">
-                  <span className={`text-4xl font-bold font-mono tabular-nums ${stats.passed ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {stats.meanAbsoluteError}
+                  <span className={`text-4xl font-bold font-mono tabular-nums ${
+                    stats.sampleCount === 0 
+                      ? 'text-slate-500' 
+                      : stats.passed 
+                      ? 'text-emerald-400' 
+                      : 'text-amber-400'
+                  }`}>
+                    {stats.sampleCount === 0 ? '--' : stats.meanAbsoluteError}
                   </span>
                   <span className="text-sm font-mono text-slate-400">{currentTarget.unit}</span>
                 </div>
@@ -945,13 +976,13 @@ export const ValidationSuite: React.FC = () => {
                 </span>
                 <div className="mt-3 flex items-baseline gap-1">
                   <span className="text-4xl font-bold font-mono text-white tabular-nums">
-                    ±{stats.standardDeviation}
+                    {stats.sampleCount === 0 ? '--' : `±${stats.standardDeviation}`}
                   </span>
                   <span className="text-sm font-mono text-slate-400">{currentTarget.unit}</span>
                 </div>
               </div>
               <div className="pt-3 border-t border-slate-800 text-xs font-mono text-slate-400">
-                Precision: {stats.standardDeviation < 0.25 ? 'High Precision ✓' : 'Standard'}
+                Precision: {stats.sampleCount === 0 ? 'No Data' : stats.standardDeviation < 0.25 ? 'High Precision' : 'Standard'}
               </div>
             </div>
 
@@ -963,42 +994,70 @@ export const ValidationSuite: React.FC = () => {
                 </span>
                 <div className="mt-3 flex items-baseline gap-1">
                   <span className="text-4xl font-bold font-mono text-cyan-300 tabular-nums">
-                    {stats.rmsError}
+                    {stats.sampleCount === 0 ? '--' : stats.rmsError}
                   </span>
                   <span className="text-sm font-mono text-slate-400">{currentTarget.unit}</span>
                 </div>
               </div>
               <div className="pt-3 border-t border-slate-800 text-xs font-mono text-slate-400">
-                95% CI: [{stats.ci95Lower}, {stats.ci95Upper}]
+                95% CI: {stats.sampleCount === 0 ? 'N/A' : `[${stats.ci95Lower}, ${stats.ci95Upper}]`}
               </div>
             </div>
 
             {/* Metric 4: Professor Verification Status */}
-            <div className={`p-5 rounded-xl border flex flex-col justify-between ${stats.passed ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-rose-500/10 border-rose-500/30'}`}>
+            <div className={`p-5 rounded-xl border flex flex-col justify-between ${
+              stats.sampleCount === 0
+                ? 'bg-slate-900/60 border-slate-800'
+                : stats.hasPhysicalData && stats.passed
+                ? 'bg-emerald-500/10 border-emerald-500/30'
+                : stats.hasPhysicalData
+                ? 'bg-rose-500/10 border-rose-500/30'
+                : 'bg-amber-500/10 border-amber-500/30'
+            }`}>
               <div className="flex items-center justify-between">
                 <span className="text-xs uppercase font-mono text-slate-400 tracking-wider">
                   Validation Status
                 </span>
-                {stats.passed ? (
+                {stats.hasPhysicalData && stats.passed ? (
                   <CheckCircle className="w-5 h-5 text-emerald-400" />
+                ) : stats.sampleCount === 0 ? (
+                  <AlertCircle className="w-5 h-5 text-slate-500" />
                 ) : (
-                  <AlertCircle className="w-5 h-5 text-rose-400" />
+                  <AlertCircle className="w-5 h-5 text-amber-400" />
                 )}
               </div>
 
               <div className="my-2">
-                <span className={`text-xl font-bold font-mono ${stats.passed ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {stats.passed ? 'BENCH PASSED ✓' : 'NEEDS CALIBRATION'}
+                <span className={`text-base font-bold font-mono ${
+                  stats.sampleCount === 0
+                    ? 'text-slate-400'
+                    : stats.hasPhysicalData && stats.passed
+                    ? 'text-emerald-400'
+                    : stats.hasPhysicalData
+                    ? 'text-rose-400'
+                    : 'text-amber-400'
+                }`}>
+                  {stats.sampleCount === 0
+                    ? 'NO PHYSICAL VALIDATION DATA RECORDED'
+                    : !stats.hasPhysicalData
+                    ? 'SIMULATED DEMO (NOT PHYSICAL DATA)'
+                    : stats.passed
+                    ? 'PHYSICAL BENCH PASSED ✓'
+                    : 'PHYSICAL BENCH FAILED THRESHOLD'}
                 </span>
                 <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                  {stats.passed
-                    ? `Meets Dr. Deepanshu protocol target (<${currentTarget.threshold} ${currentTarget.unit}). Certified for thesis defense.`
+                  {stats.sampleCount === 0
+                    ? 'No physical bench data recorded. Enter genuine measurements using the manual trial form below.'
+                    : !stats.hasPhysicalData
+                    ? 'Synthetic noise model only. Does not constitute physical validation evidence.'
+                    : stats.passed
+                    ? `Empirical caliper trials satisfy protocol threshold (<${currentTarget.threshold} ${currentTarget.unit}).`
                     : `Mean error exceeds ${currentTarget.threshold} ${currentTarget.unit} threshold.`}
                 </p>
               </div>
 
               <div className="text-[11px] font-mono text-slate-400 pt-2 border-t border-slate-800/80">
-                Sample size: n = {stats.sampleCount} repetitions
+                Sample size: n = {stats.sampleCount} repetitions {stats.hasPhysicalData ? '(Physical Bench)' : stats.sampleCount > 0 ? '(Simulated)' : ''}
               </div>
             </div>
           </div>

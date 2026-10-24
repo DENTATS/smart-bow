@@ -82,19 +82,30 @@ export interface FacialBiometrics {
   leftCanthusPt?: Point3D;
 }
 
+export type DataProvenance = 'SIMULATED' | 'MEASURED' | 'UNAVAILABLE';
+
+export interface ProvenanceValue<T = number> {
+  value: T | null;
+  provenance: DataProvenance;
+  unit: string;
+  isValid: boolean;
+  notes?: string;
+}
+
 export interface ClinicalMeasurements {
-  vdoMm: number; // Vertical Dimension of Occlusion (mm)
-  freewaySpaceMm?: number; // VDR - VDO
-  vdrMm?: number; // Vertical Dimension at Rest
-  occlusalTiltMLDeg: number; // Mediolateral tilt (angle vs interpupillary/zygomatic line)
-  occlusalTiltAPDeg: number; // Anteroposterior tilt (vs Camper's plane)
-  midlineShiftMm: number; // Maxillary midline vs facial midline (+ = right, - = left)
-  crDeviationMm: number; // CR repeatability max deviation (mm)
-  crStatus: 'ACCEPTED' | 'RETRY' | 'REJECT';
-  sciEstimateDeg: number; // Sagittal Condylar Inclination
-  bennettAngleDeg?: number; // Bennett angle (lateral excursion)
-  bennettLeftDeg: number;
-  bennettRightDeg: number;
+  provenance: DataProvenance;
+  vdoMm: number | null; // Vertical Dimension of Occlusion (mm) or null if UNAVAILABLE
+  freewaySpaceMm?: number | null; // VDR - VDO
+  vdrMm?: number | null; // Vertical Dimension at Rest
+  occlusalTiltMLDeg: number | null; // Mediolateral tilt
+  occlusalTiltAPDeg: number | null; // Anteroposterior tilt
+  midlineShiftMm: number | null; // Maxillary midline shift
+  crDeviationMm: number | null; // CR repeatability max deviation (mm)
+  crStatus: 'ACCEPTED' | 'RETRY' | 'REJECT' | 'UNAVAILABLE';
+  sciEstimateDeg: number | null; // Sagittal Condylar Inclination
+  bennettAngleDeg?: number | null;
+  bennettLeftDeg: number | null;
+  bennettRightDeg: number | null;
 }
 
 export interface CrRecord {
@@ -103,6 +114,7 @@ export interface CrRecord {
   mandibularCentroidPatient: Point3D;
   vdoMm: number;
   tiltMLDeg?: number;
+  provenance?: DataProvenance;
 }
 
 export interface GothicArchPoint {
@@ -111,6 +123,7 @@ export interface GothicArchPoint {
   z: number; // Vertical height (mm)
   phase: 'CENTRIC' | 'PROTRUSION' | 'RIGHT_LATERAL' | 'LEFT_LATERAL';
   timestamp: number;
+  provenance?: DataProvenance;
 }
 
 export type DentitionState = 
@@ -176,6 +189,7 @@ export interface PatientCase {
   createdAt: string;
   updatedAt?: string;
   isSealed?: boolean;
+  dataProvenance?: DataProvenance;
   measurements: ClinicalMeasurements;
   biometrics: FacialBiometrics;
   dentulousBiometrics?: DentulousBiometrics;
@@ -202,4 +216,28 @@ export interface ValidationBenchTest {
   repNumber: number;
   notes: string;
   timestamp: string;
+  provenance?: DataProvenance;
 }
+
+export type OpticalDiagnosticState =
+  | 'CAMERA_NOT_AVAILABLE'
+  | 'FACE_NOT_DETECTED'
+  | 'NO_ARUCO_MARKERS_DETECTED'
+  | 'FACE_MARKERS_INCOMPLETE'
+  | 'MAXILLARY_MARKERS_INCOMPLETE'
+  | 'MANDIBULAR_MARKERS_INCOMPLETE'
+  | 'CAMERA_NOT_CALIBRATED'
+  | 'MARKER_SIZE_NOT_VERIFIED'
+  | 'READY_FOR_ENGINEERING_TEST'
+  | 'MEASUREMENT_NOT_AVAILABLE';
+
+export interface OpticalDiagnosticInfo {
+  state: OpticalDiagnosticState;
+  title: string;
+  severity: 'ERROR' | 'WARNING' | 'INFO' | 'READY';
+  actionableGuidance: string;
+  missingPrerequisites: string[];
+  engineeringTestAllowed: boolean;
+  clinicalValidity: 'NOT_CLINICALLY_VALIDATED' | 'EXPERIMENTAL_ONLY';
+}
+

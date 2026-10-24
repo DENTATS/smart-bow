@@ -14,7 +14,7 @@ interface CrRecorderProps {
   onAddRecord: () => void;
   onClearRecords: () => void;
   currentMandibularPos: Point3D;
-  vdoMm: number;
+  vdoMm: number | null;
 }
 
 export const CrRecorder: React.FC<CrRecorderProps> = ({
@@ -29,29 +29,46 @@ export const CrRecorder: React.FC<CrRecorderProps> = ({
 
   const statusConfig = {
     ACCEPTED: {
-      label: 'ACCEPTED ✓',
-      sublabel: 'Repeatability < 0.5 mm (Optimal Neuromuscular Verification)',
+      label: 'SIMULATED DISPERSION < 0.5 mm',
+      sublabel: 'Mathematical calculation demonstrates low dispersion. WARNING: Simulated trial data — not verified physical patient CR.',
       badgeClass: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
       icon: CheckCircle
     },
     RETRY: {
-      label: 'RETRY ⚠',
-      sublabel: 'Deviation 0.5 – 1.0 mm (Muscle Guarding / Splinting Detected)',
+      label: 'SIMULATED DEVIATION 0.5 – 1.0 mm',
+      sublabel: 'Mathematical calculation shows borderline spread. Simulated trial data.',
       badgeClass: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
       icon: AlertTriangle
     },
     REJECT: {
-      label: 'REJECT ✗',
-      sublabel: 'Deviation > 1.0 mm (Excessive Error; Deprogramme with Leaf Gauge)',
+      label: 'SIMULATED DEVIATION > 1.0 mm',
+      sublabel: 'Mathematical calculation shows excessive spread. Simulated trial data.',
       badgeClass: 'bg-rose-500/10 text-rose-400 border-rose-500/30',
       icon: XCircle
+    },
+    UNAVAILABLE: {
+      label: 'REPEATABILITY UNAVAILABLE',
+      sublabel: 'Minimum 2 recordings required to compute repeatability.',
+      badgeClass: 'bg-slate-800 text-slate-400 border-slate-700',
+      icon: AlertTriangle
     }
   };
 
-  const currentStatus = records.length >= 2 ? statusConfig[evaluation.status] : null;
+  const currentStatus = records.length >= 2 && evaluation.status !== 'UNAVAILABLE' ? statusConfig[evaluation.status] : null;
 
   return (
     <div className="max-w-6xl mx-auto p-4 lg:p-6 space-y-6">
+      {/* Explicit Simulation Provenance Banner */}
+      <div className="p-3 bg-amber-950/60 border border-amber-500/40 rounded-xl text-xs text-amber-200 flex items-center justify-between font-mono">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+          <span>SIMULATED CENTRIC RELATION ENVIRONMENT — NO PHYSICAL BITE SENSOR ATTACHED</span>
+        </div>
+        <span className="px-2 py-0.5 rounded bg-amber-900/60 text-amber-300 border border-amber-700/60 text-[10px]">
+          SIMULATION ONLY
+        </span>
+      </div>
+
       {/* Screen Title */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
@@ -103,7 +120,7 @@ export const CrRecorder: React.FC<CrRecorderProps> = ({
 
           <div className="my-4 flex items-baseline gap-2">
             <span className={`text-6xl font-bold font-mono tracking-tight tabular-nums ${records.length < 2 ? 'text-slate-500' : evaluation.status === 'ACCEPTED' ? 'text-emerald-400' : evaluation.status === 'RETRY' ? 'text-amber-400' : 'text-rose-400'}`}>
-              {records.length >= 2 ? evaluation.maxDeviationMm.toFixed(2) : '--'}
+              {records.length >= 2 && evaluation.maxDeviationMm !== null ? evaluation.maxDeviationMm.toFixed(2) : '--'}
             </span>
             <span className="text-lg font-mono text-slate-400 font-medium">mm</span>
           </div>

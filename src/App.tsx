@@ -19,8 +19,9 @@ import { PatientDatabaseModal } from './components/PatientDatabaseModal';
 import { PatientSetupModal } from './components/PatientSetupModal';
 import { UserManualModal } from './components/UserManualModal';
 import { PatientCase, CrRecord, GothicArchPoint, DentitionState } from './types/smartbow';
+import { computeCrDeviation } from './lib/clinicalMath';
 
-// Initial case baseline
+// Initial case baseline - Explicitly classified as SIMULATED demonstration
 const DEFAULT_PATIENT_CASE: PatientCase = {
   patientId: 'SB-8042',
   name: 'Sunita Verma',
@@ -29,6 +30,7 @@ const DEFAULT_PATIENT_CASE: PatientCase = {
   dentitionState: 'EDENTULOUS',
   articulator: 'HANAU_WIDE_VUE',
   createdAt: new Date().toISOString(),
+  dataProvenance: 'SIMULATED',
   biometrics: {
     lowerThirdPct: 33.1,
     bizFaceRatio: 0.72,
@@ -42,6 +44,7 @@ const DEFAULT_PATIENT_CASE: PatientCase = {
     subnasaleToMentonMm: 62.5
   },
   measurements: {
+    provenance: 'SIMULATED',
     vdoMm: 62.5,
     freewaySpaceMm: 3.5,
     vdrMm: 66.0,
@@ -176,51 +179,38 @@ export default function App() {
     }));
   };
 
-  // Centric relation trial recording
+  // Centric relation trial recording - Simulation pathway only in V1
   const handleAddCrRecord = () => {
     updateActiveCase(c => {
       const idx = c.crRecords.length + 1;
-      // Slight jitter around centroid
-      const jitterX = (Math.random() - 0.5) * 0.35;
-      const jitterY = (Math.random() - 0.5) * 0.35;
+      const currentVdo = c.measurements.vdoMm ?? 62.5;
+      const midline = c.measurements.midlineShiftMm ?? 0;
+      
+      // Deterministic simulation trial coordinates (NO Math.random jitter!)
       const newRecord: CrRecord = {
         trialIndex: idx,
         timestamp: Date.now(),
         mandibularCentroidPatient: {
-          x: Number((c.measurements.midlineShiftMm + jitterX).toFixed(2)),
-          y: Number(jitterY.toFixed(2)),
-          z: Number((-c.measurements.vdoMm).toFixed(2))
+          x: Number(midline.toFixed(2)),
+          y: 0.0,
+          z: Number((-currentVdo).toFixed(2))
         },
-        vdoMm: c.measurements.vdoMm,
-        tiltMLDeg: c.measurements.occlusalTiltMLDeg
+        vdoMm: currentVdo,
+        tiltMLDeg: c.measurements.occlusalTiltMLDeg ?? 0,
+        provenance: 'SIMULATED'
       };
 
       const newRecords = [...c.crRecords, newRecord];
       const points = newRecords.map(r => r.mandibularCentroidPatient);
-
-      // Compute pairwise max distance
-      let maxDist = 0;
-      for (let i = 0; i < points.length; i++) {
-        for (let j = i + 1; j < points.length; j++) {
-          const dx = points[i].x - points[j].x;
-          const dy = points[i].y - points[j].y;
-          const dz = points[i].z - points[j].z;
-          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-          if (dist > maxDist) maxDist = dist;
-        }
-      }
-
-      let crStatus: 'ACCEPTED' | 'RETRY' | 'REJECT' = 'ACCEPTED';
-      if (maxDist > 1.0) crStatus = 'REJECT';
-      else if (maxDist > 0.5) crStatus = 'RETRY';
+      const evalResult = computeCrDeviation(points);
 
       return {
         ...c,
         crRecords: newRecords,
         measurements: {
           ...c.measurements,
-          crDeviationMm: Number(maxDist.toFixed(2)),
-          crStatus
+          crDeviationMm: evalResult.maxDeviationMm,
+          crStatus: evalResult.status
         }
       };
     });
@@ -232,8 +222,8 @@ export default function App() {
       crRecords: [],
       measurements: {
         ...c.measurements,
-        crDeviationMm: 0,
-        crStatus: 'ACCEPTED'
+        crDeviationMm: null,
+        crStatus: 'UNAVAILABLE'
       }
     }));
   };
@@ -253,7 +243,7 @@ export default function App() {
     }));
   };
 
-  const handleSaveGothicParameters = (sci: number, bennettL: number, bennettR: number) => {
+  const handleSaveGothicParameters = (sci: number | null, bennettL: number | null, bennettR: number | null) => {
     updateActiveCase(c => ({
       ...c,
       measurements: {
@@ -346,9 +336,9 @@ export default function App() {
             onAddRecord={handleAddCrRecord}
             onClearRecords={handleClearCrRecords}
             currentMandibularPos={{
-              x: activeCase.measurements.midlineShiftMm,
+              x: activeCase.measurements.midlineShiftMm ?? 0,
               y: 0,
-              z: -activeCase.measurements.vdoMm
+              z: -(activeCase.measurements.vdoMm ?? 62.5)
             }}
             vdoMm={activeCase.measurements.vdoMm}
           />

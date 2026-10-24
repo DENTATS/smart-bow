@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan for repairing the 1:1 A4 ArUco fiducial print sheet (fixing marker overlaps, removing text rendered inside ArUco borders, optimizing single-page DIN A4 layout, and implementing dual Vector SVG and 1:1 printable PDF export).",
+  "updatedAt":  "2026-10-24T06:07:09.163921331Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

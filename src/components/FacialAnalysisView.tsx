@@ -11,7 +11,7 @@ import { generateClinicalSuggestions } from '../lib/clinicalMath';
 
 interface FacialAnalysisViewProps {
   biometrics: FacialBiometrics;
-  vdoMm: number;
+  vdoMm: number | null;
   crDeviationMm: number | null;
   onSelectShade: (shade: string) => void;
 }

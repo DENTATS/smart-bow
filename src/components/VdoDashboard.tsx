@@ -41,7 +41,7 @@ import { VDO_CHECKPOINTS, VdoCheckpoint, JAW_KINEMATIC_DOCTRINES } from '../lib/
 import { VdoExplainerModal } from './VdoExplainerModal';
 
 interface VdoDashboardProps {
-  vdoMm: number;
+  vdoMm: number | null;
   onUpdateVdo: (vdo: number) => void;
   biometrics: FacialBiometrics;
   vdrMm: number;
@@ -57,6 +57,7 @@ export const VdoDashboard: React.FC<VdoDashboardProps> = ({
   onUpdateVdr,
   onNavigateToTab,
 }) => {
+  const currentVdo = vdoMm ?? 62.5;
   const [lockedTarget, setLockedTarget] = useState<number | null>(62.0);
   const [isLocked, setIsLocked] = useState<boolean>(false);
   const [selectedCheckpointId, setSelectedCheckpointId] = useState<string>('physiologic_rest');
@@ -76,7 +77,7 @@ export const VdoDashboard: React.FC<VdoDashboardProps> = ({
   }>>({
     physiologic_rest: {
       passed: true,
-      observedValue: `${(vdrMm - vdoMm).toFixed(1)} mm Freeway Space`,
+      observedValue: `${(vdrMm - currentVdo).toFixed(1)} mm Freeway Space`,
       verifiedAt: 'Session Baseline',
       notes: 'Patient swallowed and relaxed; bilateral freeway space verified.'
     },
@@ -94,14 +95,14 @@ export const VdoDashboard: React.FC<VdoDashboardProps> = ({
     },
     willis_commissure: {
       passed: true,
-      observedValue: `${Math.abs(vdoMm - 62.8).toFixed(1)} mm discrepancy`,
+      observedValue: `${Math.abs(currentVdo - 62.8).toFixed(1)} mm discrepancy`,
       verifiedAt: 'Willis Gauge Comparison',
       notes: 'Pupil-commissure equals subnasale-menton within 1.5mm.'
     }
   });
 
   const lowerThirdPct = biometrics.lowerThirdPct;
-  const freewaySpaceMm = Math.max(0, Number((vdrMm - vdoMm).toFixed(1)));
+  const freewaySpaceMm = Math.max(0, Number((vdrMm - currentVdo).toFixed(1)));
 
   // Target evaluation
   // Normal: 30% - 36% (ideal 33%)
@@ -226,7 +227,7 @@ export const VdoDashboard: React.FC<VdoDashboardProps> = ({
               if (isLocked) {
                 setIsLocked(false);
               } else {
-                setLockedTarget(vdoMm);
+                setLockedTarget(currentVdo);
                 setIsLocked(true);
               }
             }}
@@ -465,7 +466,7 @@ export const VdoDashboard: React.FC<VdoDashboardProps> = ({
             <div className="p-3 bg-slate-900 rounded-lg border border-slate-800 flex items-center justify-between">
               <span className="text-[11px] font-mono text-slate-400">Current Case VDO</span>
               <div className="flex items-baseline gap-1">
-                <span className="text-xl font-bold font-mono text-emerald-300 tabular-nums">{vdoMm.toFixed(1)}</span>
+                <span className="text-xl font-bold font-mono text-emerald-300 tabular-nums">{currentVdo.toFixed(1)}</span>
                 <span className="text-xs font-mono text-slate-400">mm</span>
               </div>
             </div>
@@ -505,11 +506,13 @@ export const VdoDashboard: React.FC<VdoDashboardProps> = ({
               <span className="text-xs uppercase font-mono text-slate-400 tracking-wider">
                 Current VDO (Z-Distance)
               </span>
-              <span className="text-[10px] font-mono text-cyan-400">MediaPipe + ArUco</span>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-mono border ${vdoMm !== null ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`}>
+                {vdoMm !== null ? 'LIVE TRACKED' : 'SIMULATED DEMO'}
+              </span>
             </div>
             <div className="mt-4 flex items-baseline gap-2">
               <span className={`text-6xl font-bold font-mono tracking-tight tabular-nums ${isNormal ? 'text-white' : lowerThirdPct < 30 ? 'text-amber-400' : 'text-rose-400'}`}>
-                {vdoMm.toFixed(1)}
+                {currentVdo.toFixed(1)}
               </span>
               <span className="text-lg font-mono text-slate-400 font-medium">mm</span>
             </div>
@@ -517,7 +520,7 @@ export const VdoDashboard: React.FC<VdoDashboardProps> = ({
 
           <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs font-mono">
             <span className="text-slate-400">Centroid ΔZ</span>
-            <span className="text-slate-200">{vdoMm.toFixed(2)} mm</span>
+            <span className="text-slate-200">{currentVdo.toFixed(2)} mm</span>
           </div>
         </div>
 
@@ -657,7 +660,7 @@ export const VdoDashboard: React.FC<VdoDashboardProps> = ({
                       handleToggleCheckpoint(
                         cp.id, 
                         cp.id === 'physiologic_rest' 
-                          ? `${(vdrMm - vdoMm).toFixed(1)} mm FWS` 
+                          ? `${(vdrMm - currentVdo).toFixed(1)} mm FWS` 
                           : cp.id === 'facial_thirds' 
                             ? `${lowerThirdPct.toFixed(1)}% facial third` 
                             : 'Normal clearance verified'
@@ -711,7 +714,7 @@ export const VdoDashboard: React.FC<VdoDashboardProps> = ({
                 onClick={() => handleToggleCheckpoint(
                   activeCheckpoint.id,
                   activeCheckpoint.id === 'physiologic_rest' 
-                    ? `${(vdrMm - vdoMm).toFixed(1)} mm FWS` 
+                    ? `${(vdrMm - currentVdo).toFixed(1)} mm FWS` 
                     : activeCheckpoint.id === 'facial_thirds' 
                       ? `${lowerThirdPct.toFixed(1)}% facial third` 
                       : 'Clinically verified'
@@ -792,12 +795,12 @@ export const VdoDashboard: React.FC<VdoDashboardProps> = ({
             </div>
             <div className="flex items-center justify-between p-3 bg-slate-950/60 rounded-lg border border-slate-800/80">
               <span className="text-xs text-slate-300">Subnasale to Menton (Lower Third at VDO)</span>
-              <span className="text-xs font-mono font-semibold text-cyan-400">{vdoMm.toFixed(1)} mm</span>
+              <span className="text-xs font-mono font-semibold text-cyan-400">{currentVdo.toFixed(1)} mm</span>
             </div>
             <div className="flex items-center justify-between p-3 bg-slate-950/60 rounded-lg border border-slate-800/80">
               <span className="text-xs text-slate-300">Discrepancy (Willis Delta)</span>
               <span className="text-xs font-mono font-semibold text-emerald-400">
-                {Math.abs(vdoMm - 62.8).toFixed(1)} mm (Clinically Synchronized)
+                {Math.abs(currentVdo - 62.8).toFixed(1)} mm (Clinically Synchronized)
               </span>
             </div>
           </div>
@@ -812,30 +815,30 @@ export const VdoDashboard: React.FC<VdoDashboardProps> = ({
 
           <div className="flex items-center justify-center gap-4 py-3">
             <button
-              onClick={() => onUpdateVdo(Math.max(40, vdoMm - 1))}
+              onClick={() => onUpdateVdo(Math.max(40, currentVdo - 1))}
               className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-colors cursor-pointer"
             >
               - 1.0 mm
             </button>
             <button
-              onClick={() => onUpdateVdo(Math.max(40, vdoMm - 0.5))}
+              onClick={() => onUpdateVdo(Math.max(40, currentVdo - 0.5))}
               className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-colors cursor-pointer"
             >
               - 0.5 mm
             </button>
 
             <span className="text-2xl font-mono font-bold text-white px-3 tabular-nums">
-              {vdoMm.toFixed(1)}
+              {currentVdo.toFixed(1)}
             </span>
 
             <button
-              onClick={() => onUpdateVdo(Math.min(85, vdoMm + 0.5))}
+              onClick={() => onUpdateVdo(Math.min(85, currentVdo + 0.5))}
               className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-colors cursor-pointer"
             >
               + 0.5 mm
             </button>
             <button
-              onClick={() => onUpdateVdo(Math.min(85, vdoMm + 1))}
+              onClick={() => onUpdateVdo(Math.min(85, currentVdo + 1))}
               className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-colors cursor-pointer"
             >
               + 1.0 mm

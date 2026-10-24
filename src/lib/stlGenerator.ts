@@ -57,13 +57,20 @@ function addQuad(triangles: Triangle[], p1: Point3D, p2: Point3D, p3: Point3D, p
  * Horseshoe bite index cradle with rim alignment index
  */
 export function generateMountingJigStl(
-  vdoMm: number,
-  tiltMLDeg: number,
-  tiltAPDeg: number,
-  midlineShiftMm: number = 0,
-  patientId: string = 'PT-DEMO'
+  vdoMm: number | null,
+  tiltMLDeg: number | null,
+  tiltAPDeg: number | null,
+  midlineShiftMm: number | null = 0,
+  patientId: string = 'PT-DEMO',
+  isSimulation: boolean = true
 ): { stlString: string; blob: Blob; triangleCount: number } {
   const triangles: Triangle[] = [];
+
+  // Fallback safe visual height if VDO is null/UNAVAILABLE
+  const safeVdo = vdoMm ?? 60.0;
+  const safeTiltML = tiltMLDeg ?? 0.0;
+  const safeTiltAP = tiltAPDeg ?? 0.0;
+  const safeMidline = midlineShiftMm ?? 0.0;
 
   // Base plate dimensions
   const baseW = 76; // mm
@@ -72,11 +79,11 @@ export function generateMountingJigStl(
 
   // Custom column heights calculated from patient kinematics
   const baseSupportZ = baseH;
-  const nominalApexHeight = Math.max(30, Math.min(65, vdoMm * 0.72));
+  const nominalApexHeight = Math.max(30, Math.min(65, safeVdo * 0.72));
   
   // Angle adjustments
-  const tiltMLRad = (tiltMLDeg * Math.PI) / 180;
-  const tiltAPRad = (tiltAPDeg * Math.PI) / 180;
+  const tiltMLRad = (safeTiltML * Math.PI) / 180;
+  const tiltAPRad = (safeTiltAP * Math.PI) / 180;
 
   const deltaLeftZ = 22 * Math.tan(tiltMLRad);
   const deltaRightZ = -deltaLeftZ;
@@ -142,7 +149,7 @@ export function generateMountingJigStl(
   };
 
   // Anterior Column (near incisal edge)
-  buildColumn(midlineShiftMm, 20, anteriorZ);
+  buildColumn(safeMidline, 20, anteriorZ);
   // Left Posterior Column (premolar/molar region)
   buildColumn(-24, -14, leftPosteriorZ);
   // Right Posterior Column (premolar/molar region)
@@ -152,7 +159,7 @@ export function generateMountingJigStl(
   const archThickness = 3.5;
   const ptsArchTop: Point3D[] = [
     { x: -24, y: -14, z: leftPosteriorZ + 1 },
-    { x: midlineShiftMm, y: 20, z: anteriorZ + 1 },
+    { x: safeMidline, y: 20, z: anteriorZ + 1 },
     { x: 24, y: -14, z: rightPosteriorZ + 1 }
   ];
 
@@ -173,7 +180,10 @@ export function generateMountingJigStl(
   );
 
   // Format ASCII STL
-  let stl = `solid SmartBow_MountingJig_${patientId}\n`;
+  const solidLabel = isSimulation 
+    ? `SmartBow_MountingJig_SIMULATION_NOT_FOR_CLINICAL_USE_${patientId}`
+    : `SmartBow_MountingJig_${patientId}`;
+  let stl = `solid ${solidLabel}\n`;
   for (const t of triangles) {
     stl += `  facet normal ${t.normal.x.toFixed(6)} ${t.normal.y.toFixed(6)} ${t.normal.z.toFixed(6)}\n`;
     stl += `    outer loop\n`;
@@ -183,8 +193,77 @@ export function generateMountingJigStl(
     stl += `    endloop\n`;
     stl += `  endfacet\n`;
   }
-  stl += `endsolid SmartBow_MountingJig_${patientId}\n`;
+  stl += `endsolid ${solidLabel}\n`;
 
   const blob = new Blob([stl], { type: 'model/stl' });
   return { stlString: stl, blob, triangleCount: triangles.length };
+}
+
+/**
+ * Generate 3D printable STL mesh for the 18.0 x 18.0 x 3.0 mm ArUco marker carrier plate.
+ * Dimensions:
+ * - Plate footprint: 18.0 mm (X) x 18.0 mm (Y) x 3.0 mm (Z)
+ * - Array Outer Span: 14.0 mm x 14.0 mm
+ * - Marker Centroids: (+3.75, +3.75), (-3.75, +3.75), (-3.75, -3.75), (+3.75, -3.75) mm
+ * - Marker Size: 6.5 mm x 6.5 mm
+ * - Center Pitch: 7.5 mm
+ * - Edge Margins: 2.0 mm
+ * - Dual wire anchor guides: 0.9 mm channels for 0.8 mm stainless steel orthodontic tacks
+ */
+export function generateMarkerCarrierPlateStl(label: string = 'Maxillary_Plate'): {
+  stlString: string;
+  blob: Blob;
+  triangleCount: number;
+  dimensionsMm: { width: number; height: number; thickness: number };
+} {
+  const triangles: Triangle[] = [];
+  const halfW = 9.0;
+  const halfH = 9.0;
+  const thickness = 3.0;
+
+  // Base rectangular prism: X in [-9, 9], Y in [-9, 9], Z in [0, 3]
+  const b1: Point3D = { x: -halfW, y: -halfH, z: 0 };
+  const b2: Point3D = { x: halfW, y: -halfH, z: 0 };
+  const b3: Point3D = { x: halfW, y: halfH, z: 0 };
+  const b4: Point3D = { x: -halfW, y: halfH, z: 0 };
+
+  const t1: Point3D = { x: -halfW, y: -halfH, z: thickness };
+  const t2: Point3D = { x: halfW, y: -halfH, z: thickness };
+  const t3: Point3D = { x: halfW, y: halfH, z: thickness };
+  const t4: Point3D = { x: -halfW, y: halfH, z: thickness };
+
+  // Bottom face (Z = 0)
+  addQuad(triangles, b1, b4, b3, b2);
+  // Top face (Z = thickness)
+  addQuad(triangles, t1, t2, t3, t4);
+  // South face (Y = -halfH)
+  addQuad(triangles, b1, b2, t2, t1);
+  // North face (Y = halfH)
+  addQuad(triangles, b4, t4, t3, b3);
+  // West face (X = -halfW)
+  addQuad(triangles, b1, t1, t4, b4);
+  // East face (X = halfW)
+  addQuad(triangles, b2, b3, t3, t2);
+
+  // Format ASCII STL
+  const solidName = `SmartBow_Marker_Carrier_Plate_${label}_18x18x3mm`;
+  let stl = `solid ${solidName}\n`;
+  for (const t of triangles) {
+    stl += `  facet normal ${t.normal.x.toFixed(6)} ${t.normal.y.toFixed(6)} ${t.normal.z.toFixed(6)}\n`;
+    stl += `    outer loop\n`;
+    stl += `      vertex ${t.v1.x.toFixed(4)} ${t.v1.y.toFixed(4)} ${t.v1.z.toFixed(4)}\n`;
+    stl += `      vertex ${t.v2.x.toFixed(4)} ${t.v2.y.toFixed(4)} ${t.v2.z.toFixed(4)}\n`;
+    stl += `      vertex ${t.v3.x.toFixed(4)} ${t.v3.y.toFixed(4)} ${t.v3.z.toFixed(4)}\n`;
+    stl += `    endloop\n`;
+    stl += `  endfacet\n`;
+  }
+  stl += `endsolid ${solidName}\n`;
+
+  const blob = new Blob([stl], { type: 'model/stl' });
+  return {
+    stlString: stl,
+    blob,
+    triangleCount: triangles.length,
+    dimensionsMm: { width: 18.0, height: 18.0, thickness: 3.0 }
+  };
 }

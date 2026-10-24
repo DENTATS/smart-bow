@@ -92,6 +92,26 @@ export function invertRigidMatrix(m: Matrix4): Matrix4 {
 }
 
 /**
+ * Multiply two 4x4 transformation matrices: C = A * B
+ * Row-major order.
+ */
+export function multiplyRigidMatrices(a: Matrix4, b: Matrix4): Matrix4 {
+  const ae = a.elements;
+  const be = b.elements;
+  const out = new Array(16);
+  for (let r = 0; r < 4; r++) {
+    for (let c = 0; c < 4; c++) {
+      out[r * 4 + c] = 
+        ae[r * 4 + 0] * be[0 * 4 + c] +
+        ae[r * 4 + 1] * be[1 * 4 + c] +
+        ae[r * 4 + 2] * be[2 * 4 + c] +
+        ae[r * 4 + 3] * be[3 * 4 + c];
+    }
+  }
+  return { elements: out };
+}
+
+/**
  * Transform 3D point by 4x4 matrix
  */
 export function transformPoint(m: Matrix4, p: Point3D): Point3D {

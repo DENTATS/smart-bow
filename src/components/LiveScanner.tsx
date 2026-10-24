@@ -58,6 +58,8 @@ import { RealtimeFaceTracker, FaceTrackingResult } from '../lib/faceTrackingEngi
 import { DentitionState, DentulousAttachmentMethod, CameraCalibrationSettings } from '../types/smartbow';
 import { loadCameraCalibration, saveCameraCalibration } from '../lib/cameraCalibration';
 import { drawMediaPipeSkeletalOverlay, VERIFIED_SKELETAL_NODES } from '../lib/mediaPipeSkeletalTopology';
+import { evaluateOpticalDiagnostic, checkCaptureReadiness, OPTICAL_DIAGNOSTIC_DEFINITIONS } from '../lib/opticalDiagnostics';
+import { OpticalDiagnosticState, OpticalDiagnosticInfo } from '../types/smartbow';
 
 export type RecordingFilterMode = 
   | 'AUTO_STABILIZE' 
@@ -87,13 +89,13 @@ const FILTER_MODES: FilterOption[] = [
 interface LiveScannerProps {
   dentitionState?: DentitionState;
   onUpdateDentition?: (state: DentitionState) => void;
-  vdoMm: number;
+  vdoMm: number | null;
   onUpdateVdo: (vdo: number) => void;
-  tiltMLDeg: number;
+  tiltMLDeg: number | null;
   onUpdateTiltML: (tilt: number) => void;
-  tiltAPDeg: number;
+  tiltAPDeg: number | null;
   onUpdateTiltAP: (tilt: number) => void;
-  midlineShiftMm: number;
+  midlineShiftMm: number | null;
   onUpdateMidline: (shift: number) => void;
   onRecordCrTrial: () => void;
   onNavigateToTab: (tab: 'vdo' | 'cr' | 'gothic' | 'facial' | 'articulator' | 'validation') => void;
@@ -177,6 +179,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
 
   // Live tracking telemetry published to React UI
   const [trackingData, setTrackingData] = useState<FaceTrackingResult | null>(null);
+  const lastTelemetryTimestampRef = useRef<number>(Date.now());
 
   // Camera Optical Distance Calibration & Intrinsics
   const [calibrationSettings, setCalibrationSettings] = useState<CameraCalibrationSettings>(() => loadCameraCalibration());
@@ -186,13 +189,36 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
   // Handheld Phone Shake / Tilt Simulator for demonstrating Invariance & Stability Alert
   const [handheldPhoneRoll, setHandheldPhoneRoll] = useState<number>(0);
 
+  // Marker print physical caliper scale verification (100mm scale bar)
+  const [markerCaliperVerified, setMarkerCaliperVerified] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    const val = localStorage.getItem('smartbow_marker_caliper_verified');
+    return val === null ? true : val === 'true';
+  });
+
   // Prosthodontic simulator controls
-  const [simVdo, setSimVdo] = useState<number>(vdoMm || 62.5);
-  const [simTiltML, setSimTiltML] = useState<number>(tiltMLDeg || 1.8);
-  const [simTiltAP, setSimTiltAP] = useState<number>(tiltAPDeg || 4.2);
-  const [simMidline, setSimMidline] = useState<number>(midlineShiftMm || 0.4);
+  const [simVdo, setSimVdo] = useState<number>(vdoMm ?? 62.5);
+  const [simTiltML, setSimTiltML] = useState<number>(tiltMLDeg ?? 1.8);
+  const [simTiltAP, setSimTiltAP] = useState<number>(tiltAPDeg ?? 4.2);
+  const [simMidline, setSimMidline] = useState<number>(midlineShiftMm ?? 0.4);
   const [simLateral, setSimLateral] = useState<number>(0.0);
   const [simProtrusion, setSimProtrusion] = useState<number>(0.0);
+
+  // Authoritative 10-state Optical Diagnostic Engine
+  const opticalDiagnostic: OpticalDiagnosticInfo = evaluateOpticalDiagnostic({
+    cameraActive: mode === 'SIMULATION' ? true : cameraActive,
+    cameraError: cameraPermissionError,
+    mode,
+    faceDetected: trackingData?.detected ?? (mode === 'SIMULATION'),
+    faceMarkersComplete: trackingData?.markerCoverage?.faceFrameLocked ?? (mode === 'SIMULATION'),
+    arucoDetected: mode === 'SIMULATION' ? (showMarkers || (trackingData?.markerCoverage?.allThreeGroupsVisible ?? true)) : false,
+    maxillaryComplete: trackingData?.markerCoverage?.maxillaBoardLocked ?? (mode === 'SIMULATION'),
+    mandibularComplete: trackingData?.markerCoverage?.mandibleBoardLocked ?? (mode === 'SIMULATION'),
+    cameraCalibrated: calibrationSettings?.isCalibrated ?? true,
+    markerSizeVerified: markerCaliperVerified,
+    trackingStable: trackingData ? trackingData.frameQualityScore > 35 : true,
+    telemetryAgeMs: mode === 'SIMULATION' ? 0 : (Date.now() - lastTelemetryTimestampRef.current),
+  });
 
   // Physical motion sensor hook (accelerometer + gyro)
   useEffect(() => {
@@ -304,8 +330,33 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     }
   };
 
-  // Instagram/Snapchat style Shutter Trigger action
+  // Shutter Trigger action - strictly gated by 10-state optical diagnostic safety rules
   const handleTriggerShutter = useCallback(() => {
+    // Validate live readiness at the exact instant of shutter trigger
+    const readiness = checkCaptureReadiness({
+      cameraActive: mode === 'SIMULATION' ? true : cameraActive,
+      cameraError: cameraPermissionError,
+      mode,
+      faceDetected: trackingData?.detected ?? (mode === 'SIMULATION'),
+      faceMarkersComplete: trackingData?.markerCoverage?.faceFrameLocked ?? (mode === 'SIMULATION'),
+      arucoDetected: mode === 'SIMULATION' ? (showMarkers || (trackingData?.markerCoverage?.allThreeGroupsVisible ?? true)) : false,
+      maxillaryComplete: trackingData?.markerCoverage?.maxillaBoardLocked ?? (mode === 'SIMULATION'),
+      mandibularComplete: trackingData?.markerCoverage?.mandibleBoardLocked ?? (mode === 'SIMULATION'),
+      cameraCalibrated: calibrationSettings?.isCalibrated ?? true,
+      markerSizeVerified: markerCaliperVerified,
+      trackingStable: trackingData ? trackingData.frameQualityScore > 35 : true,
+      telemetryAgeMs: mode === 'SIMULATION' ? 0 : (Date.now() - lastTelemetryTimestampRef.current),
+    });
+
+    if (!readiness.canCapture) {
+      setTrialSuccessToast({
+        visible: true,
+        text: readiness.reason || `Capture Blocked: Prerequisites unsatisfied`
+      });
+      setTimeout(() => setTrialSuccessToast(null), 4000);
+      return;
+    }
+
     // Optical camera flash animation
     setShutterTriggered(true);
     setTimeout(() => setShutterTriggered(false), 350);
@@ -317,24 +368,20 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
       } catch {}
     }
 
-    // Capture record based on active filter mode
+    // Capture record in engineering test mode
     onRecordCrTrial();
 
-    const currentRecordedVdo = trackingData 
-      ? trackingData.softwareSelfCorrection.invariantVdoMm.toFixed(1) 
-      : simVdo.toFixed(1);
-
     const toastMsg = activeFilter === 'CR_TRIAL'
-      ? `CR Trial #${crTrialCount} Logged: ${currentRecordedVdo} mm (VDO Recorded)`
-      : `Measurement Captured: ${currentRecordedVdo} mm VDO (Face Tracked)`;
+      ? `CR Engineering Test #${crTrialCount} Logged: ${simVdo.toFixed(1)} mm VDO (ENGINEERING BENCH ONLY)`
+      : `Engineering Test Captured: ${simVdo.toFixed(1)} mm VDO (RESEARCH PROTOTYPE — NOT CLINICAL DATA)`;
 
     setTrialSuccessToast({ visible: true, text: toastMsg });
     setCrTrialCount(prev => (prev % 3) + 1);
 
     setTimeout(() => {
       setTrialSuccessToast(null);
-    }, 2600);
-  }, [onRecordCrTrial, trackingData, simVdo, activeFilter, crTrialCount]);
+    }, 2800);
+  }, [opticalDiagnostic, onRecordCrTrial, activeFilter, crTrialCount, simVdo]);
 
   // Robust camera setup supporting latest modern phones (iPhone 13-16, Galaxy S23/S24, Pixel 7-9)
   useEffect(() => {
@@ -518,6 +565,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
       // Throttled UI state publication (80ms) for high responsiveness without React thrashing
       if (time - lastReactUiUpdate > 80) {
         lastReactUiUpdate = time;
+        lastTelemetryTimestampRef.current = Date.now();
         setTrackingData(tracking);
         // If webcam is tracking dynamic mouth opening, sync VDO
         if (mode === 'WEBCAM' && tracking.detected && tracking.mouthOpenFraction > 0.05) {
@@ -1324,6 +1372,72 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         </div>
       </header>
 
+      {/* 10-State Optical Diagnostic & Clinical Gating Banner */}
+      <div className={`border-b px-4 py-2 flex flex-col md:flex-row md:items-center justify-between gap-2 text-xs font-mono transition-colors ${
+        opticalDiagnostic.severity === 'READY'
+          ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-200'
+          : opticalDiagnostic.severity === 'ERROR'
+          ? 'bg-rose-950/80 border-rose-500/70 text-rose-200'
+          : 'bg-amber-950/80 border-amber-500/70 text-amber-200'
+      }`}>
+        <div className="flex items-start md:items-center gap-2.5 min-w-0">
+          <span className={`w-2.5 h-2.5 rounded-full shrink-0 mt-0.5 md:mt-0 ${
+            opticalDiagnostic.severity === 'READY'
+              ? 'bg-emerald-400 shadow-sm shadow-emerald-400'
+              : opticalDiagnostic.severity === 'ERROR'
+              ? 'bg-rose-400 animate-pulse'
+              : 'bg-amber-400 animate-pulse'
+          }`} />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-bold tracking-tight">
+                OPTICAL DIAGNOSTIC: {opticalDiagnostic.title}
+              </span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider ${
+                opticalDiagnostic.severity === 'READY'
+                  ? 'bg-emerald-900 text-emerald-300 border border-emerald-700'
+                  : opticalDiagnostic.severity === 'ERROR'
+                  ? 'bg-rose-900 text-rose-300 border border-rose-700'
+                  : 'bg-amber-900 text-amber-300 border border-amber-700'
+              }`}>
+                {opticalDiagnostic.state}
+              </span>
+              <span className="text-[10px] text-slate-400 hidden lg:inline">
+                (RESEARCH PROTOTYPE — NOT CLINICALLY VALIDATED)
+              </span>
+            </div>
+            <p className="text-[11px] opacity-90 font-sans mt-0.5 truncate max-w-2xl">
+              {opticalDiagnostic.actionableGuidance}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+          {/* Caliper verification toggle */}
+          <button
+            onClick={() => {
+              const next = !markerCaliperVerified;
+              setMarkerCaliperVerified(next);
+              if (typeof window !== 'undefined') {
+                localStorage.setItem('smartbow_marker_caliper_verified', String(next));
+              }
+            }}
+            className={`px-2 py-0.5 rounded text-[10px] border transition-colors cursor-pointer ${
+              markerCaliperVerified
+                ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
+                : 'bg-slate-900 text-amber-300 border-amber-700 animate-pulse'
+            }`}
+            title="Click to toggle 100mm physical caliper print verification"
+          >
+            {markerCaliperVerified ? '100mm Scale: Verified ✓' : '100mm Scale: Unverified ⚠'}
+          </button>
+
+          <span className="bg-black/40 px-2 py-0.5 rounded text-[10px] border border-white/10 text-slate-300 font-bold">
+            {opticalDiagnostic.engineeringTestAllowed ? 'RECORD: READY (BENCH)' : 'RECORD: GATED'}
+          </span>
+        </div>
+      </div>
+
       {/* Camera Permission Warning Banner */}
       {cameraPermissionError && mode === 'WEBCAM' && (
         <div className="bg-amber-950/90 border-b border-amber-700 px-4 py-2 flex items-center justify-between text-xs text-amber-200">
@@ -1723,24 +1837,44 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
               <Activity className="w-4 h-4 text-cyan-400" />
             </button>
 
-            {/* Main Instagram / Snapchat Circular Shutter Button */}
-            <button
-              onClick={handleTriggerShutter}
-              className="relative flex items-center justify-center w-16 h-16 bg-white p-1 rounded-full ring-4 ring-cyan-400/80 hover:ring-cyan-300 transition-transform active:scale-90 cursor-pointer shadow-2xl"
-              title="Click to Record Clinical Trial"
-            >
-              {/* Inner Circle with trial counter */}
-              <div className="w-full h-full rounded-full flex flex-col items-center justify-center bg-gradient-to-tr from-cyan-500 to-emerald-400 text-slate-950 transition-colors">
-                {activeFilter === 'CR_TRIAL' ? (
-                  <>
-                    <span className="text-[10px] font-bold uppercase tracking-wider leading-none">TRIAL</span>
-                    <span className="text-xs font-mono font-black">{crTrialCount}/3</span>
-                  </>
-                ) : (
-                  <Camera className="w-5 h-5 text-slate-950" />
-                )}
-              </div>
-            </button>
+            {/* Main Circular Shutter Button - Gated by 10-State Optical Safety Rules */}
+            {(() => {
+              const isCaptureAllowed = opticalDiagnostic.engineeringTestAllowed;
+              return (
+                <button
+                  onClick={handleTriggerShutter}
+                  disabled={!isCaptureAllowed}
+                  className={`relative flex items-center justify-center w-16 h-16 p-1 rounded-full ring-4 transition-transform ${
+                    isCaptureAllowed
+                      ? 'bg-white ring-cyan-400/80 hover:ring-cyan-300 active:scale-90 cursor-pointer shadow-2xl'
+                      : 'bg-slate-800 ring-slate-700/60 opacity-50 cursor-not-allowed shadow-none'
+                  }`}
+                  title={
+                    !isCaptureAllowed
+                      ? `Capture Gated [${opticalDiagnostic.state}]: ${opticalDiagnostic.actionableGuidance}`
+                      : 'Click to Record Engineering Test Trial (Research Prototype)'
+                  }
+                >
+                  {/* Inner Circle with trial counter */}
+                  <div className={`w-full h-full rounded-full flex flex-col items-center justify-center transition-colors ${
+                    isCaptureAllowed
+                      ? 'bg-gradient-to-tr from-cyan-500 to-emerald-400 text-slate-950'
+                      : 'bg-slate-700 text-slate-400'
+                  }`}>
+                    {!isCaptureAllowed ? (
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-center leading-tight">GATED</span>
+                    ) : activeFilter === 'CR_TRIAL' ? (
+                      <>
+                        <span className="text-[10px] font-bold uppercase tracking-wider leading-none">TRIAL</span>
+                        <span className="text-xs font-mono font-black">{crTrialCount}/3</span>
+                      </>
+                    ) : (
+                      <Camera className="w-5 h-5 text-slate-950" />
+                    )}
+                  </div>
+                </button>
+              );
+            })()}
 
             {/* Right Action: Software Self-Correction Invariance Info */}
             <button

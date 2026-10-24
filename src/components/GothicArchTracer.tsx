@@ -34,7 +34,7 @@ interface GothicArchTracerProps {
   points: GothicArchPoint[];
   onAddPoint: (pt: GothicArchPoint) => void;
   onClearPoints: () => void;
-  onSaveParameters: (sci: number, bennettL: number, bennettR: number) => void;
+  onSaveParameters: (sci: number | null, bennettL: number | null, bennettR: number | null) => void;
   onNavigateToTab?: (tab: any) => void;
 }
 
@@ -355,21 +355,46 @@ export const GothicArchTracer: React.FC<GothicArchTracerProps> = ({
     }
 
     // Highlight Apex (Centric Relation)
-    const apexX = ox + metrics.apex.x * scale;
-    const apexY = oy - metrics.apex.y * scale;
+    if (metrics.apex) {
+      const apexX = ox + metrics.apex.x * scale;
+      const apexY = oy - metrics.apex.y * scale;
 
-    ctx.fillStyle = '#ef4444';
-    ctx.beginPath();
-    ctx.arc(apexX, apexY, 6, 0, Math.PI * 2);
-    ctx.fill();
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.arc(apexX, apexY, 6, 0, Math.PI * 2);
+      ctx.fill();
 
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
 
-    ctx.font = '11px JetBrains Mono, monospace';
-    ctx.fillStyle = '#f87171';
-    ctx.fillText('CR APEX', apexX + 10, apexY + 4);
+      ctx.font = '11px JetBrains Mono, monospace';
+      ctx.fillStyle = '#f87171';
+      ctx.fillText('CR APEX', apexX + 10, apexY + 4);
+
+      // Bennett Angle Vector Lines (Left & Right from apex)
+      if (points.length > 5 && metrics.bennettRightDeg !== null && metrics.bennettLeftDeg !== null) {
+        const rayLen = 9 * scale;
+        const bRRad = (metrics.bennettRightDeg * Math.PI) / 180;
+        const bLRad = (metrics.bennettLeftDeg * Math.PI) / 180;
+
+        // Right Bennett ray
+        ctx.strokeStyle = 'rgba(6, 182, 212, 0.5)';
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(apexX, apexY);
+        ctx.lineTo(apexX + Math.sin(bRRad) * rayLen, apexY - Math.cos(bRRad) * rayLen);
+        ctx.stroke();
+
+        // Left Bennett ray
+        ctx.strokeStyle = 'rgba(168, 85, 247, 0.5)';
+        ctx.beginPath();
+        ctx.moveTo(apexX, apexY);
+        ctx.lineTo(apexX - Math.sin(bLRad) * rayLen, apexY - Math.cos(bLRad) * rayLen);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
 
     // Live pen stylus marker if recording or simulating live
     if (isRecordingLive) {
@@ -386,29 +411,6 @@ export const GothicArchTracer: React.FC<GothicArchTracerProps> = ({
       ctx.fillStyle = '#38bdf8';
       ctx.font = '10px JetBrains Mono, monospace';
       ctx.fillText(`Stylus: (${liveX.toFixed(1)}, ${liveY.toFixed(1)})`, curX + 10, curY - 6);
-    }
-
-    // Bennett Angle Vector Lines (Left & Right from apex)
-    if (points.length > 5) {
-      const rayLen = 9 * scale;
-      const bRRad = (metrics.bennettRightDeg * Math.PI) / 180;
-      const bLRad = (metrics.bennettLeftDeg * Math.PI) / 180;
-
-      // Right Bennett ray
-      ctx.strokeStyle = 'rgba(6, 182, 212, 0.5)';
-      ctx.setLineDash([3, 3]);
-      ctx.beginPath();
-      ctx.moveTo(apexX, apexY);
-      ctx.lineTo(apexX + Math.sin(bRRad) * rayLen, apexY - Math.cos(bRRad) * rayLen);
-      ctx.stroke();
-
-      // Left Bennett ray
-      ctx.strokeStyle = 'rgba(168, 85, 247, 0.5)';
-      ctx.beginPath();
-      ctx.moveTo(apexX, apexY);
-      ctx.lineTo(apexX - Math.sin(bLRad) * rayLen, apexY - Math.cos(bLRad) * rayLen);
-      ctx.stroke();
-      ctx.setLineDash([]);
     }
   }, [points, activePhase, metrics, isRecordingLive, liveX, liveY]);
 
@@ -690,8 +692,14 @@ export const GothicArchTracer: React.FC<GothicArchTracerProps> = ({
           )}
 
           <button
-            onClick={() => onSaveParameters(metrics.sciEstimateDeg, metrics.bennettLeftDeg, metrics.bennettRightDeg)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-300 bg-emerald-950/60 border border-emerald-800 hover:bg-emerald-900 rounded-lg transition-colors cursor-pointer"
+            onClick={() => metrics.sciEstimateDeg !== null && onSaveParameters(metrics.sciEstimateDeg, metrics.bennettLeftDeg, metrics.bennettRightDeg)}
+            disabled={metrics.sciEstimateDeg === null}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+              metrics.sciEstimateDeg !== null
+                ? 'text-emerald-300 bg-emerald-950/60 border border-emerald-800 hover:bg-emerald-900 cursor-pointer'
+                : 'text-slate-500 bg-slate-900/60 border border-slate-800 cursor-not-allowed'
+            }`}
+            title={metrics.sciEstimateDeg === null ? 'No Gothic arch points recorded (UNAVAILABLE)' : 'Apply to Virtual Articulator'}
           >
             <Check className="w-3.5 h-3.5" />
             <span>Apply to Articulator</span>
@@ -934,13 +942,15 @@ export const GothicArchTracer: React.FC<GothicArchTracerProps> = ({
               <span className="text-[10px] font-mono text-amber-400">Y-Z Angle</span>
             </div>
             <div className="mt-3 flex items-baseline gap-2">
-              <span className="text-5xl font-bold font-mono text-amber-300 tabular-nums">
-                {metrics.sciEstimateDeg}
+              <span className={`text-5xl font-bold font-mono tabular-nums ${metrics.sciEstimateDeg !== null ? 'text-amber-300' : 'text-slate-500'}`}>
+                {metrics.sciEstimateDeg !== null ? metrics.sciEstimateDeg : '--'}
               </span>
               <span className="text-lg font-mono text-slate-400">° deg</span>
             </div>
             <p className="text-xs text-slate-400 mt-2">
-              Protrusive condylar path steepness. Hanau calibration dial set directly to this angle.
+              {metrics.sciEstimateDeg !== null
+                ? 'Protrusive condylar path steepness. Hanau calibration dial set directly to this angle.'
+                : 'Condylar inclination UNAVAILABLE. Record protrusive border movement to calculate.'}
             </p>
           </div>
 
@@ -957,13 +967,13 @@ export const GothicArchTracer: React.FC<GothicArchTracerProps> = ({
               <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800">
                 <span className="text-[11px] font-mono text-slate-400 block">Left Bennett (L)</span>
                 <span className="text-2xl font-bold font-mono text-purple-300 tabular-nums">
-                  {metrics.bennettLeftDeg}°
+                  {metrics.bennettLeftDeg !== null ? `${metrics.bennettLeftDeg}°` : '--'}
                 </span>
               </div>
               <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800">
                 <span className="text-[11px] font-mono text-slate-400 block">Right Bennett (R)</span>
                 <span className="text-2xl font-bold font-mono text-cyan-300 tabular-nums">
-                  {metrics.bennettRightDeg}°
+                  {metrics.bennettRightDeg !== null ? `${metrics.bennettRightDeg}°` : '--'}
                 </span>
               </div>
             </div>
@@ -971,7 +981,7 @@ export const GothicArchTracer: React.FC<GothicArchTracerProps> = ({
             <div className="text-xs text-slate-400 pt-2 border-t border-slate-800 flex justify-between">
               <span>Hanau Formula (L = H/8 + 12):</span>
               <span className="font-mono text-slate-200">
-                {(metrics.sciEstimateDeg / 8 + 12).toFixed(1)}°
+                {metrics.sciEstimateDeg !== null ? `${(metrics.sciEstimateDeg / 8 + 12).toFixed(1)}°` : '--'}
               </span>
             </div>
           </div>
@@ -984,15 +994,17 @@ export const GothicArchTracer: React.FC<GothicArchTracerProps> = ({
             <div className="space-y-2 text-xs font-mono">
               <div className="flex justify-between text-slate-300">
                 <span className="text-slate-400">Apex Coordinate:</span>
-                <span>({metrics.apex.x.toFixed(2)}, {metrics.apex.y.toFixed(2)}) mm</span>
+                <span>{metrics.apex ? `(${metrics.apex.x.toFixed(2)}, ${metrics.apex.y.toFixed(2)}) mm` : '--'}</span>
               </div>
               <div className="flex justify-between text-slate-300">
                 <span className="text-slate-400">Protrusive Length:</span>
-                <span>{metrics.protrusiveLengthMm} mm</span>
+                <span>{metrics.protrusiveLengthMm !== null ? `${metrics.protrusiveLengthMm} mm` : '--'}</span>
               </div>
               <div className="flex justify-between text-slate-300">
                 <span className="text-slate-400">Lateral Symmetry:</span>
-                <span className="text-emerald-400">{metrics.symmetryIndex}% (Balanced)</span>
+                <span className={metrics.symmetryIndex !== null ? 'text-emerald-400' : 'text-slate-500'}>
+                  {metrics.symmetryIndex !== null ? `${metrics.symmetryIndex}% (Balanced)` : '--'}
+                </span>
               </div>
             </div>
           </div>

@@ -183,3 +183,108 @@ export const MARKER_PASTING_GUIDELINES: MarkerPastingGuideline[] = [
     commonPitfalls: 'Saliva bubbles reflecting direct spotlight into the camera lens, washing out high-contrast ArUco black/white bit cells.'
   }
 ];
+
+export interface OcclusalRimDatum {
+  id: string;
+  parameter: string;
+  constructionReferenceMm: string;
+  isUniversalConstant: false;
+  anatomicalReference: string;
+  sourceCitation: string;
+  clinicalSignificance: string;
+  chairsideAdjustmentProtocol: string;
+}
+
+export const SOURCED_RIM_DATUMS: Record<string, OcclusalRimDatum> = {
+  maxillaryAnteriorHeight: {
+    id: 'maxillary_ant_height',
+    parameter: 'Maxillary Anterior Rim Height',
+    constructionReferenceMm: '20.0 – 22.0 mm',
+    isUniversalConstant: false,
+    anatomicalReference: 'From labial sulcus reflection adjacent to labial frenum to incisal edge',
+    sourceCitation: "Boucher's Prosthodontic Treatment for Edentulous Patients (12th ed., p. 285); Winkler S. Essentials of Complete Denture Prosthodontics (2nd ed., p. 138).",
+    clinicalSignificance: 'Starting fabrication guideline establishing upper lip vermilion support, philtrum depth, and 1.0–2.0 mm incisal display at rest.',
+    chairsideAdjustmentProtocol: 'NOT a universal constant. Clinician must contour chairside using Fox plane (parallel to interpupillary line) and phonetics ("F" and "V" sounds where incisal edges contact the wet-dry line of the lower lip).'
+  },
+  maxillaryPosteriorHeight: {
+    id: 'maxillary_post_height',
+    parameter: 'Maxillary Posterior Rim Height',
+    constructionReferenceMm: '8.0 – 10.0 mm',
+    isUniversalConstant: false,
+    anatomicalReference: 'Tapers posteriorly from premolars to molar region, terminating 6–8 mm anterior to hamular notch',
+    sourceCitation: "Boucher's Prosthodontic Treatment for Edentulous Patients (12th ed., p. 285).",
+    clinicalSignificance: 'Provides interarch clearance for mandibular baseplate and prevents collision in retro-tuberosity space.',
+    chairsideAdjustmentProtocol: 'Contour parallel to Camper\'s line (ala-tragus line) using Fox plane.'
+  },
+  maxillaryAnteriorWidth: {
+    id: 'maxillary_ant_width',
+    parameter: 'Maxillary Anterior Rim Width',
+    constructionReferenceMm: '4.0 – 5.0 mm',
+    isUniversalConstant: false,
+    anatomicalReference: 'Labial incisal table',
+    sourceCitation: "Boucher's Prosthodontic Treatment for Edentulous Patients (12th ed., p. 286).",
+    clinicalSignificance: 'Replicates natural central and lateral incisor labiolingual width.',
+    chairsideAdjustmentProtocol: 'Modify for ridge resorption stage; preserve 8–10° labial inclination.'
+  },
+  maxillaryPosteriorWidth: {
+    id: 'maxillary_post_width',
+    parameter: 'Maxillary Posterior Rim Width',
+    constructionReferenceMm: '8.0 – 10.0 mm',
+    isUniversalConstant: false,
+    anatomicalReference: 'Molar occlusal table',
+    sourceCitation: "Boucher's Prosthodontic Treatment for Edentulous Patients (12th ed., p. 286).",
+    clinicalSignificance: 'Accommodates posterior molar buccolingual dimension and provides stable recording table.',
+    chairsideAdjustmentProtocol: 'Ensure width does not encroach upon buccal corridor or tongue space.'
+  },
+  mandibularAnteriorHeight: {
+    id: 'mandibular_ant_height',
+    parameter: 'Mandibular Anterior Rim Height',
+    constructionReferenceMm: '16.0 – 18.0 mm',
+    isUniversalConstant: false,
+    anatomicalReference: 'From labial sulcus reflection to anterior incisal edge',
+    sourceCitation: "Boucher's Prosthodontic Treatment for Edentulous Patients (12th ed., p. 287); Winkler S. Essentials of Complete Denture Prosthodontics (2nd ed., p. 140).",
+    clinicalSignificance: 'Starting fabrication guideline positioning incisal edge flush with lower lip vermilion border at rest.',
+    chairsideAdjustmentProtocol: 'NOT a universal constant. Adjusted chairside to satisfy speaking space (Silverman sibilant "S" test, 1.0–2.0 mm clearance).'
+  },
+  mandibularPosteriorHeight: {
+    id: 'mandibular_post_height',
+    parameter: 'Mandibular Posterior Rim Height (Retromolar Pad Datum)',
+    constructionReferenceMm: 'Flush with junction of middle and upper third of retromolar pad',
+    isUniversalConstant: false,
+    anatomicalReference: 'Posterior occlusal plane height terminates flush with the junction of middle & upper third of the pear-shaped retromolar pad',
+    sourceCitation: "Boucher's Prosthodontic Treatment for Edentulous Patients (12th ed., p. 287); Wright CR (1966).",
+    clinicalSignificance: 'The retromolar pad is a stable anatomical landmark that does not resorb; positioning the plane at this junction ensures stable tongue posture and prevents denture displacement.',
+    chairsideAdjustmentProtocol: 'Scribe line at junction of middle and upper 1/3 of retromolar pad; melt rim flat to this exact anatomical datum.'
+  },
+  mandibularAnteriorWidth: {
+    id: 'mandibular_ant_width',
+    parameter: 'Mandibular Anterior Rim Width',
+    constructionReferenceMm: '4.0 – 5.0 mm',
+    isUniversalConstant: false,
+    anatomicalReference: 'Incisal edge table',
+    sourceCitation: "Boucher's Prosthodontic Treatment for Edentulous Patients (12th ed., p. 287).",
+    clinicalSignificance: 'Matches mandibular incisor dimensions.',
+    chairsideAdjustmentProtocol: 'Align vertically over crest of ridge.'
+  },
+  mandibularPosteriorWidth: {
+    id: 'mandibular_post_width',
+    parameter: 'Mandibular Posterior Rim Width',
+    constructionReferenceMm: '8.0 – 10.0 mm',
+    isUniversalConstant: false,
+    anatomicalReference: 'Molar table centered between lingual line to retromolar pad and buccal ridge limit (Pound\'s triangle)',
+    sourceCitation: "Pound E (1970); Boucher's (12th ed., p. 287).",
+    clinicalSignificance: 'Prevents tongue crowding lingually and modiolus displacement buccally.',
+    chairsideAdjustmentProtocol: 'Ensure lingual rim contour lies strictly within Pound\'s triangle.'
+  },
+  acrylicMarkerBracket: {
+    id: 'acrylic_marker_bracket',
+    parameter: 'Physical Marker Target Array Bracket',
+    constructionReferenceMm: '18.0 × 18.0 × 3.0 mm',
+    isUniversalConstant: false,
+    anatomicalReference: 'Mounted on buccal premolar surface with 0.8 mm stainless steel retention wire',
+    sourceCitation: 'SmartBow CAD Spec v1.2',
+    clinicalSignificance: 'Carries 4 ArUco fiducials (IDs 3-6 maxilla, IDs 7-10 mandible) for 6-DOF optical tracking.',
+    chairsideAdjustmentProtocol: 'Seat with 5.0 mm clearance above/below occlusal table. Verify ≥2.0 mm vertical separation between plates at maximum closure.'
+  }
+};
+

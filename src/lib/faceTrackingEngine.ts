@@ -10,7 +10,7 @@
  * Dr. Deepanshu · MDS Prosthodontics · Maitri College of Dentistry
  */
 
-import { Point3D, MarkerPose, CameraCalibrationSettings } from '../types/smartbow';
+import { Point3D, MarkerPose, CameraCalibrationSettings, DataProvenance } from '../types/smartbow';
 import { Matrix4, buildPatientFrame, invertRigidMatrix, transformPoint } from './patientFrame';
 import { calculateOpticalDistanceCm, DEFAULT_CAMERA_CALIBRATION } from './cameraCalibration';
 
@@ -50,6 +50,10 @@ export interface BrightnessMonitoringData {
 }
 
 export interface FaceTrackingResult {
+  provenance: DataProvenance;
+  isSimulation: boolean;
+  metricMeasurementAvailable: boolean;
+  trackingStatusLabel: string;
   detected: boolean;
   landmarks: Array<{ x: number; y: number; z: number }>;
   faceBox: { x: number; y: number; width: number; height: number }; // normalized 0-1
@@ -711,8 +715,9 @@ export class RealtimeFaceTracker {
     this.smoothDistanceCm = this.filterDist.filter(opticalDistance.distanceCm, now);
     const estimatedDistanceCm = Math.round(this.smoothDistanceCm);
 
-    // Dynamic VDO derived from tracked mouth opening + baseline
-    const dynamicTrackedVdo = simulatedVdoMm + (this.smoothMouthOpen * 14.0);
+    // In V1, avoid recursive accumulation loop:
+    // dynamicTrackedVdo does not feed back into simulatedVdoMm
+    const dynamicTrackedVdo = simulatedVdoMm;
 
     // Build the dynamic 468 MediaPipe landmarks conforming to the user's real face
     const landmarks = this.synthesizeDynamicFaceMesh(
@@ -749,12 +754,14 @@ export class RealtimeFaceTracker {
     );
 
     // 7. Validate 3-Group Marker Coverage (Face Frame + Maxilla + Mandible)
+    // Note: V1 webcam mode has NO physical ArUco detection; coverage marks fiducials unavailable
     const coverage = this.computeMarkerCoverage(
       this.smoothW,
       this.smoothCx,
       this.smoothCy,
       this.smoothYaw,
-      quality.totalScore
+      quality.totalScore,
+      false // webcam mode
     );
 
     // 8. Software Self-Correction calculation
@@ -882,6 +889,10 @@ export class RealtimeFaceTracker {
     };
 
     return {
+      provenance: 'UNAVAILABLE' as DataProvenance,
+      isSimulation: false,
+      metricMeasurementAvailable: false,
+      trackingStatusLabel: isFaceIdentified ? 'OPTICAL PREVIEW (METRIC ENGINE UNAVAILABLE)' : 'TRACKING LOST',
       detected: isFaceIdentified,
       landmarks,
       faceBox: {
@@ -1338,31 +1349,38 @@ export class RealtimeFaceTracker {
    * Group 2: Maxillary Rim Target (ArUco IDs 3, 4, 5, 6 at right premolar)
    * Group 3: Mandibular Rim Target (ArUco IDs 7, 8, 9, 10 at right premolar)
    */
-  private computeMarkerCoverage(
+  public computeMarkerCoverage(
     faceWidth: number,
     cx: number,
     cy: number,
     yawDeg: number,
-    qualityScore: number
+    qualityScore: number,
+    isSimulation: boolean = false
   ): FaceTrackingResult['markerCoverage'] {
-    // Face frame is locked if face size is sufficient and quality score > 45
-    const faceFrameLocked = faceWidth > 0.20 && qualityScore >= 45;
-
-    // Right premolar ArUco targets are visible when face is framed and not turned excessively away
-    const rightCorridorVisible = (cx > 0.25 && cx < 0.75) && (yawDeg > -25 && yawDeg < 45);
-    const maxillaBoardLocked = faceFrameLocked && rightCorridorVisible;
-    const mandibleBoardLocked = faceFrameLocked && rightCorridorVisible;
-
-    const allThreeGroupsVisible = faceFrameLocked && maxillaBoardLocked && mandibleBoardLocked;
-
-    let statusMessage = "All 3 Marker Groups Locked — Ready for VDO/CR Record";
-    if (!faceFrameLocked) {
-      statusMessage = "Group 1 Missing: Face frame reference not acquired";
-    } else if (!maxillaBoardLocked) {
-      statusMessage = "Group 2 Missing: Maxillary right premolar board occluded";
-    } else if (!mandibleBoardLocked) {
-      statusMessage = "Group 3 Missing: Mandibular right premolar board occluded";
+    if (isSimulation) {
+      const faceFrameLocked = faceWidth > 0.15 && qualityScore >= 35;
+      return {
+        faceFrameLocked,
+        maxillaBoardLocked: faceFrameLocked,
+        mandibleBoardLocked: faceFrameLocked,
+        allThreeGroupsVisible: faceFrameLocked,
+        statusMessage: faceFrameLocked 
+          ? "Simulation Mode — Synthetic Phantom Landmarks Active"
+          : "Simulator: Tracking Lost"
+      };
     }
+
+    // In WEBCAM mode (V1 runtime):
+    // Real optical ArUco detection is a stub (returns []) and has not been validated.
+    // Face frame heuristics exist, but maxillary and mandibular physical fiducials are NOT detected.
+    const faceFrameLocked = faceWidth > 0.20 && qualityScore >= 45;
+    const maxillaBoardLocked = false;
+    const mandibleBoardLocked = false;
+    const allThreeGroupsVisible = false; // Block capture of fabricated measurements
+
+    const statusMessage = faceFrameLocked
+      ? "Optical Face Detected — Physical ArUco Boards UNAVAILABLE (V2 Engine Required for Metric Capture)"
+      : "Tracking Lost — Center Face in Camera View";
 
     return {
       faceFrameLocked,
@@ -1374,9 +1392,32 @@ export class RealtimeFaceTracker {
   }
 
   /**
+  /**
+   * Public helper for simulator frame synthesis
+   */
+  public synthesizeSimulatedFrame(
+    frameIndex: number = 0,
+    simVdo: number = 62.5,
+    tiltML: number = 1.4,
+    tiltAP: number = 4.8,
+    midline: number = 0.3,
+    operatorTilt: number = 0,
+    distCm: number = 48
+  ): FaceTrackingResult {
+    return this.generateCalibratedPhantomTracking(
+      640,
+      480,
+      simVdo,
+      { ml: tiltML, ap: tiltAP, midline },
+      operatorTilt,
+      distCm
+    );
+  }
+
+  /**
    * Generates tracking state for Calibrated Phantom Simulator mode
    */
-  private generateCalibratedPhantomTracking(
+  public generateCalibratedPhantomTracking(
     canvasW: number,
     canvasH: number,
     simVdo: number,
@@ -1499,6 +1540,10 @@ export class RealtimeFaceTracker {
     }
 
     return {
+      provenance: 'SIMULATED' as DataProvenance,
+      isSimulation: true,
+      metricMeasurementAvailable: false,
+      trackingStatusLabel: 'SIMULATED PHANTOM (NOT CLINICAL DATA)',
       detected: true,
       landmarks,
       faceBox: { x: cx - w / 2, y: cy - h / 2, width: w, height: h },
@@ -1532,7 +1577,7 @@ export class RealtimeFaceTracker {
         maxillaBoardLocked: true,
         mandibleBoardLocked: true,
         allThreeGroupsVisible: true,
-        statusMessage: 'All 3 Marker Groups Locked — Geometric Invariance Active'
+        statusMessage: 'Simulator Mode — Synthetic Phantom Active (Simulation Only)'
       },
       softwareSelfCorrection: {
         isInvariantActive: true,

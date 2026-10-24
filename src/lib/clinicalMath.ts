@@ -1,27 +1,61 @@
 /**
  * SmartBow AI - Clinical Prosthodontic Mathematics & Treatment Rules
  * Dr. Deepanshu · MDS Prosthodontics · Maitri College of Dentistry
+ * 
+ * PHASE 1 SAFETY CONTAINMENT:
+ * - Explicit DataProvenance and UNAVAILABLE states on missing inputs.
+ * - Zero default fallback values (missing values return null / UNAVAILABLE).
+ * - CR status requires >= 2 real recordings; never defaults to ACCEPTED.
  */
 
-import { Point3D, FacialBiometrics, GothicArchPoint } from '../types/smartbow';
+import { Point3D, FacialBiometrics, GothicArchPoint, DataProvenance, ProvenanceValue } from '../types/smartbow';
 import { Matrix4, vecDistance, vecDot } from './patientFrame';
 
 /**
  * Compute Vertical Dimension of Occlusion (VDO) in millimeters.
  * VDO = abs(pos_mand.z - pos_max.z) * 1000 (if poses are in meters)
  * or abs(pos_mand.z - pos_max.z) if in mm.
+ * 
+ * SAFETY RULE: Returns null if either input is missing. NEVER returns fabricated 62.0 default.
  */
-export function computeVdo(posMax: Point3D | null, posMand: Point3D | null, scaleToMm: number = 1): number {
-  if (!posMax || !posMand) return 62.0; // Default clinical average (mm)
+export function computeVdo(posMax: Point3D | null, posMand: Point3D | null, scaleToMm: number = 1): number | null {
+  if (!posMax || !posMand) return null;
   const dz = Math.abs(posMand.z - posMax.z);
   return Number((dz * scaleToMm).toFixed(1));
+}
+
+export function computeVdoWithProvenance(
+  posMax: Point3D | null, 
+  posMand: Point3D | null, 
+  scaleToMm: number = 1,
+  inputProvenance: DataProvenance = 'UNAVAILABLE'
+): ProvenanceValue<number> {
+  const vdo = computeVdo(posMax, posMand, scaleToMm);
+  if (vdo === null) {
+    return {
+      value: null,
+      provenance: 'UNAVAILABLE',
+      unit: 'mm',
+      isValid: false,
+      notes: 'Missing required maxillary or mandibular fiducial positions'
+    };
+  }
+  return {
+    value: vdo,
+    provenance: inputProvenance,
+    unit: 'mm',
+    isValid: inputProvenance !== 'UNAVAILABLE'
+  };
 }
 
 /**
  * Compute Occlusal Plane Mediolateral (ML) Tilt in degrees.
  * Angle between Maxillary Rim X-axis and Patient Frame X-axis.
+ * SAFETY RULE: Returns null if either matrix is missing.
  */
-export function computeOcclusalTiltML(tMaxCam: Matrix4, tPatient: Matrix4): number {
+export function computeOcclusalTiltML(tMaxCam: Matrix4 | null, tPatient: Matrix4 | null): number | null {
+  if (!tMaxCam || !tPatient || !tMaxCam.elements || !tPatient.elements) return null;
+
   // Maxillary X-axis in camera space
   const maxX: Point3D = {
     x: tMaxCam.elements[0],
@@ -46,17 +80,26 @@ export function computeOcclusalTiltML(tMaxCam: Matrix4, tPatient: Matrix4): numb
  * Formula from Dr. Deepanshu's specification:
  * Pairwise Euclidean distances across recorded CR mandibular centroids.
  * Repeatability criteria:
- *   < 0.5 mm: ACCEPTED ✓ (proceed to teeth arrangement)
- *   0.5 - 1.0 mm: RETRY ⚠ (muscle splinting / deprogramme)
- *   > 1.0 mm: REJECT ✗ (deprogramme with Lucia jig/leaf gauge and re-record)
+ *   < 0.5 mm: ACCEPTED (proceed to teeth arrangement)
+ *   0.5 - 1.0 mm: RETRY (muscle splinting / deprogramme)
+ *   > 1.0 mm: REJECT (deprogramme with Lucia jig/leaf gauge and re-record)
+ * 
+ * SAFETY RULE: If records.length < 2, returns status: 'UNAVAILABLE' and maxDeviationMm: null.
+ * NEVER fabricates ACCEPTED or 0.0 deviation.
  */
 export function computeCrDeviation(records: Point3D[]): {
-  maxDeviationMm: number;
-  status: 'ACCEPTED' | 'RETRY' | 'REJECT';
+  maxDeviationMm: number | null;
+  status: 'ACCEPTED' | 'RETRY' | 'REJECT' | 'UNAVAILABLE';
   pairwiseDistances: number[];
+  provenance: DataProvenance;
 } {
-  if (records.length < 2) {
-    return { maxDeviationMm: 0.0, status: 'ACCEPTED', pairwiseDistances: [] };
+  if (!records || records.length < 2) {
+    return { 
+      maxDeviationMm: null, 
+      status: 'UNAVAILABLE', 
+      pairwiseDistances: [],
+      provenance: 'UNAVAILABLE'
+    };
   }
 
   const distances: number[] = [];
@@ -80,7 +123,8 @@ export function computeCrDeviation(records: Point3D[]): {
   return {
     maxDeviationMm: Number(maxDist.toFixed(2)),
     status,
-    pairwiseDistances: distances
+    pairwiseDistances: distances,
+    provenance: 'SIMULATED'
   };
 }
 
@@ -89,23 +133,28 @@ export function computeCrDeviation(records: Point3D[]): {
  * - Apex position (Centric Relation)
  * - Bennett angles (Left & Right)
  * - Sagittal Condylar Inclination (SCI)
+ * 
+ * SAFETY RULE: Returns null metrics and status 'UNAVAILABLE' if points.length === 0.
+ * NEVER fabricates 12° Bennett or 33° SCI when no physical points exist.
  */
 export function analyzeGothicArch(points: GothicArchPoint[]): {
-  apex: { x: number; y: number };
-  bennettLeftDeg: number;
-  bennettRightDeg: number;
-  sciEstimateDeg: number;
-  protrusiveLengthMm: number;
-  symmetryIndex: number;
+  apex: { x: number; y: number } | null;
+  bennettLeftDeg: number | null;
+  bennettRightDeg: number | null;
+  sciEstimateDeg: number | null;
+  protrusiveLengthMm: number | null;
+  symmetryIndex: number | null;
+  status: 'ANALYZED' | 'UNAVAILABLE';
 } {
-  if (points.length === 0) {
+  if (!points || points.length === 0) {
     return {
-      apex: { x: 0, y: 0 },
-      bennettLeftDeg: 12.0,
-      bennettRightDeg: 12.0,
-      sciEstimateDeg: 33.0,
-      protrusiveLengthMm: 6.5,
-      symmetryIndex: 94.0
+      apex: null,
+      bennettLeftDeg: null,
+      bennettRightDeg: null,
+      sciEstimateDeg: null,
+      protrusiveLengthMm: null,
+      symmetryIndex: null,
+      status: 'UNAVAILABLE'
     };
   }
 
@@ -125,7 +174,7 @@ export function analyzeGothicArch(points: GothicArchPoint[]): {
   const protrusivePoints = points.filter(p => p.phase === 'PROTRUSION');
 
   // Compute angles relative to sagittal midline (Y-axis)
-  let bennettRight = 12.0;
+  let bennettRight: number | null = null;
   if (rightPoints.length > 0) {
     const farRight = rightPoints.reduce((max, p) => (p.x > max.x ? p : max), rightPoints[0]);
     const dx = farRight.x - apex.x;
@@ -135,7 +184,7 @@ export function analyzeGothicArch(points: GothicArchPoint[]): {
     }
   }
 
-  let bennettLeft = 12.0;
+  let bennettLeft: number | null = null;
   if (leftPoints.length > 0) {
     const farLeft = leftPoints.reduce((min, p) => (p.x < min.x ? p : min), leftPoints[0]);
     const dx = Math.abs(farLeft.x - apex.x);
@@ -146,8 +195,8 @@ export function analyzeGothicArch(points: GothicArchPoint[]): {
   }
 
   // SCI estimate from protrusive path angle in Y-Z plane
-  let sciEstimate = 33.0; // Hanau default is ~30° - 35°
-  let protrusiveLength = 6.0;
+  let sciEstimate: number | null = null;
+  let protrusiveLength: number | null = null;
   if (protrusivePoints.length > 1) {
     const firstP = protrusivePoints[0];
     const lastP = protrusivePoints[protrusivePoints.length - 1];
@@ -155,21 +204,23 @@ export function analyzeGothicArch(points: GothicArchPoint[]): {
     const dz = Math.abs(lastP.z - firstP.z);
     protrusiveLength = dy;
     if (dy > 1) {
-      sciEstimate = (Math.atan2(dz, dy) * 180) / Math.PI;
-      // Normal clinical range is 25° - 55°
-      sciEstimate = Math.max(20, Math.min(55, sciEstimate + 25));
+      const rawSci = (Math.atan2(dz, dy) * 180) / Math.PI;
+      sciEstimate = Math.max(20, Math.min(55, rawSci + 25));
     }
   }
 
-  const symmetry = Math.max(70, Math.min(100, 100 - Math.abs(bennettLeft - bennettRight) * 3));
+  const symmetry = (bennettLeft !== null && bennettRight !== null)
+    ? Math.max(70, Math.min(100, 100 - Math.abs(bennettLeft - bennettRight) * 3))
+    : null;
 
   return {
     apex,
-    bennettLeftDeg: Number(Math.max(5, Math.min(25, bennettLeft)).toFixed(1)),
-    bennettRightDeg: Number(Math.max(5, Math.min(25, bennettRight)).toFixed(1)),
-    sciEstimateDeg: Number(sciEstimate.toFixed(1)),
-    protrusiveLengthMm: Number(protrusiveLength.toFixed(1)),
-    symmetryIndex: Number(symmetry.toFixed(0))
+    bennettLeftDeg: bennettLeft !== null ? Number(Math.max(5, Math.min(25, bennettLeft)).toFixed(1)) : null,
+    bennettRightDeg: bennettRight !== null ? Number(Math.max(5, Math.min(25, bennettRight)).toFixed(1)) : null,
+    sciEstimateDeg: sciEstimate !== null ? Number(sciEstimate.toFixed(1)) : null,
+    protrusiveLengthMm: protrusiveLength !== null ? Number(protrusiveLength.toFixed(1)) : null,
+    symmetryIndex: symmetry !== null ? Number(symmetry.toFixed(0)) : null,
+    status: 'ANALYZED'
   };
 }
 
@@ -178,7 +229,7 @@ export function analyzeGothicArch(points: GothicArchPoint[]): {
  */
 export function generateClinicalSuggestions(
   biometrics: FacialBiometrics,
-  vdoMm: number,
+  vdoMm: number | null,
   crDevMm: number | null
 ): {
   vdoAssessment: string;
@@ -186,7 +237,7 @@ export function generateClinicalSuggestions(
   mouldSuggestion: string;
   mouldDescription: string;
   crQuality: string;
-  crStatus: 'ACCEPTED' | 'RETRY' | 'REJECT';
+  crStatus: 'ACCEPTED' | 'RETRY' | 'REJECT' | 'UNAVAILABLE';
   shadeGuidance: string;
   mountingGuidance: string;
 } {
@@ -194,7 +245,10 @@ export function generateClinicalSuggestions(
   let vdoAssessment = 'VDO proportion acceptable (within 30–36% norm)';
   let vdoAction = 'Maintain current rim vertical dimension';
 
-  if (lt < 30) {
+  if (vdoMm === null) {
+    vdoAssessment = 'VDO measurement UNAVAILABLE — awaiting optical fiducial tracking';
+    vdoAction = 'Record maxillary and mandibular fiducials to evaluate vertical dimension';
+  } else if (lt < 30) {
     vdoAssessment = `Collapsed VDO — lower facial third is ${lt.toFixed(1)}% (target: 33%)`;
     const deficitMm = ((33 - lt) * 0.8).toFixed(1);
     vdoAction = `Increase VDO on mandibular occlusal rim by approx +${deficitMm} mm`;
@@ -222,17 +276,17 @@ export function generateClinicalSuggestions(
 
   const mould = mouldMapping[form];
 
-  let crQuality = 'No CR recordings captured';
-  let crStatus: 'ACCEPTED' | 'RETRY' | 'REJECT' = 'ACCEPTED';
+  let crQuality = 'No CR recordings captured (UNAVAILABLE)';
+  let crStatus: 'ACCEPTED' | 'RETRY' | 'REJECT' | 'UNAVAILABLE' = 'UNAVAILABLE';
   if (crDevMm !== null) {
     if (crDevMm < 0.5) {
-      crQuality = `CR deviation ${crDevMm.toFixed(2)} mm — ACCEPTED ✓ (Optimal neuromuscular repeatability)`;
+      crQuality = `CR deviation ${crDevMm.toFixed(2)} mm — ACCEPTED (Optimal neuromuscular repeatability < 0.5mm)`;
       crStatus = 'ACCEPTED';
     } else if (crDevMm <= 1.0) {
-      crQuality = `CR deviation ${crDevMm.toFixed(2)} mm — RETRY ⚠ (Borderline muscle guarding; deprogramme 5 mins)`;
+      crQuality = `CR deviation ${crDevMm.toFixed(2)} mm — RETRY (Borderline muscle guarding; deprogramme 5 mins)`;
       crStatus = 'RETRY';
     } else {
-      crQuality = `CR deviation ${crDevMm.toFixed(2)} mm — REJECT ✗ (Excessive deviation; verify rim stability & deprogramme)`;
+      crQuality = `CR deviation ${crDevMm.toFixed(2)} mm — REJECT (Excessive deviation; verify rim stability & deprogramme)`;
       crStatus = 'REJECT';
     }
   }
@@ -245,6 +299,6 @@ export function generateClinicalSuggestions(
     crQuality,
     crStatus,
     shadeGuidance: `${biometrics.estimatedShade} baseline (Vitapan Classical scale) · Confirm with porcelain tab under 5500K color-corrected lighting`,
-    mountingGuidance: `Hanau Wide-Vue semi-adjustable mounting with custom 3D printed transfer jig eliminates anatomic facebow fork discomfort`
+    mountingGuidance: `Hanau Wide-Vue semi-adjustable mounting (transfer jig requires validated metric calibration)`
   };
 }

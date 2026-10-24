@@ -138,7 +138,19 @@ export const ClinicalReportModal: React.FC<ClinicalReportModalProps> = ({
         )}
 
         {/* Prescription Document Sheet (Formatted for print) */}
-        <div className="p-8 overflow-y-auto space-y-6 print-container bg-white text-slate-900 font-sans">
+        <div className="p-8 overflow-y-auto space-y-6 print-container bg-white text-slate-900 font-sans relative">
+          {/* Mandatory Safety Watermark Banner */}
+          {m.provenance !== 'MEASURED' && (
+            <div className="p-3 bg-amber-50 border-2 border-dashed border-amber-500 rounded-lg text-center font-mono text-amber-800">
+              <div className="text-sm font-black tracking-widest uppercase">
+                *** SIMULATION — NOT FOR CLINICAL USE ***
+              </div>
+              <div className="text-[11px] mt-0.5 text-amber-900 font-sans">
+                Research demonstration data. Measurements are uncalibrated and NOT authorized for final prosthesis fabrication.
+              </div>
+            </div>
+          )}
+
           {/* Institution & Clinician Header */}
           <div className="border-b-2 border-slate-900 pb-4 flex items-start justify-between">
             <div>
@@ -156,7 +168,7 @@ export const ClinicalReportModal: React.FC<ClinicalReportModalProps> = ({
             <div className="text-right font-mono text-xs text-slate-600">
               <div>Ref: <span className="font-bold text-slate-900">{patientCase.patientId}</span></div>
               <div>Date: {new Date(patientCase.createdAt).toLocaleDateString()}</div>
-              <div>Device: Smartphone Computer Vision (468 Mesh + ArUco)</div>
+              <div>Provenance: <span className={`font-bold ${m.provenance === 'MEASURED' ? 'text-emerald-700' : 'text-amber-700'}`}>{m.provenance || 'SIMULATED'}</span></div>
             </div>
           </div>
 
@@ -191,7 +203,7 @@ export const ClinicalReportModal: React.FC<ClinicalReportModalProps> = ({
               <div className="space-y-2">
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-600">Vertical Dimension of Occlusion (VDO):</span>
-                  <span className="font-mono font-bold text-slate-900">{m.vdoMm} mm</span>
+                  <span className="font-mono font-bold text-slate-900">{m.vdoMm !== null ? `${m.vdoMm} mm` : 'UNAVAILABLE'}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-600">Lower Facial Third Proportion:</span>
@@ -199,15 +211,15 @@ export const ClinicalReportModal: React.FC<ClinicalReportModalProps> = ({
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-600">Mediolateral Occlusal Tilt (ML):</span>
-                  <span className="font-mono font-semibold text-slate-800">{m.occlusalTiltMLDeg}° vs Interpupillary</span>
+                  <span className="font-mono font-semibold text-slate-800">{m.occlusalTiltMLDeg !== null ? `${m.occlusalTiltMLDeg}° vs Interpupillary` : 'UNAVAILABLE'}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-600">Anteroposterior Occlusal Tilt (AP):</span>
-                  <span className="font-mono font-semibold text-slate-800">{m.occlusalTiltAPDeg}° vs Camper's Plane</span>
+                  <span className="font-mono font-semibold text-slate-800">{m.occlusalTiltAPDeg !== null ? `${m.occlusalTiltAPDeg}° vs Camper's Plane` : 'UNAVAILABLE'}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-600">Maxillary Dental Midline Shift:</span>
-                  <span className="font-mono font-semibold text-slate-800">{m.midlineShiftMm >= 0 ? `+${m.midlineShiftMm}` : m.midlineShiftMm} mm</span>
+                  <span className="font-mono font-semibold text-slate-800">{m.midlineShiftMm !== null ? `${m.midlineShiftMm >= 0 ? `+${m.midlineShiftMm}` : m.midlineShiftMm} mm` : 'UNAVAILABLE'}</span>
                 </div>
               </div>
             </div>
@@ -263,7 +275,7 @@ export const ClinicalReportModal: React.FC<ClinicalReportModalProps> = ({
               <div className="p-2.5 bg-white border border-emerald-200 rounded-lg">
                 <span className="text-slate-500 block text-[10px]">FREEWAY SPACE (IRS)</span>
                 <span className="font-bold text-slate-900 text-sm">{(m.freewaySpaceMm ?? 3.5).toFixed(1)} mm</span>
-                <span className="text-[10px] text-emerald-700 block mt-0.5">VDR {(m.vdrMm ?? 66.0).toFixed(1)} - VDO {m.vdoMm.toFixed(1)}</span>
+                <span className="text-[10px] text-emerald-700 block mt-0.5">VDR {(m.vdrMm ?? 66.0).toFixed(1)} - VDO {m.vdoMm !== null ? m.vdoMm.toFixed(1) : 'UNAVAILABLE'}</span>
               </div>
               <div className="p-2.5 bg-white border border-emerald-200 rounded-lg">
                 <span className="text-slate-500 block text-[10px]">TURNER WEAR CAT.</span>
@@ -278,7 +290,7 @@ export const ClinicalReportModal: React.FC<ClinicalReportModalProps> = ({
             </div>
 
             <p className="text-[11px] text-slate-700 leading-relaxed">
-              <strong>Clinical Assessment:</strong> Condylar translation recorded from verified Centric Relation to Maximum Intercuspation demonstrates an anterior slide of 1.4mm with 0.8mm lateral deviation. For full-mouth reconstruction or splint therapy, restore in verified CR at <strong>{m.vdoMm.toFixed(1)} mm</strong> preserving <strong>{(m.freewaySpaceMm ?? 3.5).toFixed(1)} mm</strong> interocclusal freeway space.
+              <strong>Clinical Assessment:</strong> Condylar translation recorded from verified Centric Relation to Maximum Intercuspation demonstrates an anterior slide of 1.4mm with 0.8mm lateral deviation. For full-mouth reconstruction or splint therapy, restore in verified CR at <strong>{m.vdoMm !== null ? `${m.vdoMm.toFixed(1)} mm` : 'UNAVAILABLE'}</strong> preserving <strong>{(m.freewaySpaceMm ?? 3.5).toFixed(1)} mm</strong> interocclusal freeway space.
             </p>
           </div>
 
