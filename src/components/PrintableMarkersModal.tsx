@@ -199,45 +199,28 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={handleDownloadA4Svg}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors cursor-pointer"
-              title="Download 1:1 Scale Vector SVG"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Vector SVG</span>
-            </button>
+          <div className="flex items-center gap-2">
             <button
               onClick={() => handleDownloadA4Pdf('VECTOR')}
               disabled={isGeneratingPdf}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg shadow transition-colors cursor-pointer"
-              title="Download 1:1 Scale HD Native Vector PDF (DIN A4)"
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg shadow-sm transition-colors cursor-pointer"
+              title="Download 1:1 Scale Print-Ready PDF (DIN A4)"
             >
               {isGeneratingPdf ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Generating...</span>
+                  <span>Generating PDF...</span>
                 </>
               ) : (
                 <>
                   <FileText className="w-3.5 h-3.5" />
-                  <span>Download HD Vector PDF</span>
+                  <span>Download Print-Ready PDF</span>
                 </>
               )}
             </button>
             <button
-              onClick={() => handleDownloadA4Pdf('RASTER_600DPI')}
-              disabled={isGeneratingPdf}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 rounded-lg border border-slate-700 transition-colors cursor-pointer"
-              title="Download 600 DPI High-Resolution Raster Fallback PDF"
-            >
-              <FileText className="w-3.5 h-3.5 text-slate-400" />
-              <span>600 DPI Raster PDF</span>
-            </button>
-            <button
               onClick={handlePrint}
-              className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-lg shadow transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-lg shadow-sm transition-colors cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
               <span>Print (100% Scale)</span>
@@ -276,13 +259,13 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
         {/* Printable Document Body */}
         <div className="p-6 overflow-y-auto space-y-6 bg-slate-950 text-white print-area">
           {/* Printing Warning Notice */}
-          <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs space-y-1.5 no-print">
-            <div className="flex items-center gap-2 text-rose-300 font-bold">
-              <ShieldAlert className="w-4 h-4 text-rose-400" />
-              <span>MANDATORY PRINT INSTRUCTION: PRINT AT ACTUAL SIZE (100%) — DO NOT FIT TO PAGE</span>
+          <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs space-y-2 no-print">
+            <div className="flex items-center gap-2 text-rose-300 font-bold tracking-wide">
+              <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>PRINT AT ACTUAL SIZE — 100% SCALE · DISABLE FIT TO PAGE · VERIFY PRINTED DIMENSIONS BEFORE USE</span>
             </div>
             <p className="text-slate-300 text-[11px] leading-relaxed">
-              In your printer dialog, ensure <strong>Scale</strong> is explicitly set to <strong>100%</strong> (Actual Size) and page margins are set to <strong>None / Minimum</strong>. Check the printed 100 mm reference bar with a Vernier caliper before cutting.
+              In your printer dialog, ensure <strong>Scale</strong> is explicitly set to <strong>100%</strong> (Actual Size) and page margins are set to <strong>None / Minimum</strong>. Do not select &quot;Fit to Printable Area&quot; or &quot;Shrink to Fit&quot;. A PDF file cannot override printer driver auto-scaling on its own; always confirm actual physical dimensions using the 100.0 mm horizontal and 50.0 mm vertical scale bars and the 20.0 × 20.0 mm verification square with a calibrated caliper before clinical mounting.
             </p>
           </div>
 
@@ -497,32 +480,16 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
                     className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors cursor-pointer"
                   >
                     <Eye className="w-3.5 h-3.5" />
-                    <span>{showFullSheetPreview ? 'Hide Sheet Layout' : 'Preview Full Sheet'}</span>
-                  </button>
-                  <button
-                    onClick={handleDownloadA4Svg}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Vector SVG</span>
+                    <span>{showFullSheetPreview ? 'Hide Preview' : 'Preview Sheet'}</span>
                   </button>
                   <button
                     onClick={() => handleDownloadA4Pdf('VECTOR')}
                     disabled={isGeneratingPdf}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
-                    title="Download 1:1 Scale HD Native Vector PDF"
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg shadow-sm transition-colors cursor-pointer"
+                    title="Download 1:1 Scale Print-Ready PDF (DIN A4)"
                   >
                     {isGeneratingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
-                    <span>HD Vector PDF</span>
-                  </button>
-                  <button
-                    onClick={() => handleDownloadA4Pdf('RASTER_600DPI')}
-                    disabled={isGeneratingPdf}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 rounded-lg border border-slate-700 transition-colors cursor-pointer"
-                    title="Download 600 DPI Raster Fallback PDF"
-                  >
-                    <FileText className="w-3.5 h-3.5 text-slate-400" />
-                    <span>600 DPI PDF</span>
+                    <span>Download Print-Ready PDF</span>
                   </button>
                 </div>
               </div>

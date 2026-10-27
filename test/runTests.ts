@@ -977,12 +977,15 @@ console.log('\nTest Group 18: High-Definition Vector PDF & Dual-Axis Verificatio
     `has100mmH=${has100mmH}, has50mmV=${has50mmV}, hasSquareGauge=${hasSquareGauge}`
   );
 
-  // 18d: Explicit print scaling instructions
-  const hasPrintNotice = a4Svg.includes('PRINT AT 100% SCALE (ACTUAL SIZE) · DO NOT FIT TO PAGE');
+  // 18d: Explicit print scaling instructions (triad: 100% scale, disable fit to page, verify dimensions)
+  const hasPrintNotice = 
+    a4Svg.includes('PRINT AT ACTUAL SIZE — 100% SCALE') &&
+    a4Svg.includes('DISABLE FIT TO PAGE') &&
+    a4Svg.includes('VERIFY PRINTED DIMENSIONS BEFORE USE');
   assert(
     hasPrintNotice,
-    '18d: Strict print instructions banner (100% scale / Do Not Fit To Page) embedded in printable sheet',
-    'Missing print notice banner'
+    '18d: Strict print instructions banner (PRINT AT ACTUAL SIZE — 100% SCALE · DISABLE FIT TO PAGE · VERIFY PRINTED DIMENSIONS BEFORE USE) embedded in printable sheet',
+    'Missing print notice banner triad'
   );
 
   // 18e: Publication-grade Clinical Report Vector PDF generation

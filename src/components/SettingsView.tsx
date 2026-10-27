@@ -49,7 +49,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           System Settings &amp; Clinical Tools
         </h1>
         <p className="text-sm text-slate-600 mt-1">
-          Optical calibration, physical printout sheets, academic defense suite, and developer telemetry.
+          Optical calibration, physical printout sheets, validation and engineering roadmap, and developer telemetry.
         </p>
       </div>
 
@@ -125,7 +125,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      {/* Academic Defense & Literature */}
+      {/* Clinical Validation & Roadmap */}
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
         <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
           Evidence, Literature &amp; Verification
@@ -143,10 +143,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-slate-900">
-                  Academic Defense &amp; Validation Suite
+                  Validation &amp; Engineering Roadmap
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Run 86 unit verification tests, audit synthetic data containment &amp; safety gates
+                  92 unit safety tests, synthetic data containment, and milestone improvement roadmap
                 </p>
               </div>
             </div>

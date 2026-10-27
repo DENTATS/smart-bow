@@ -1,6 +1,6 @@
 /**
- * SmartBow AI - Professor Briefing & Academic Validation Suite
- * "Two Questions That Matter: Is It Easier? Can We Prove It Works?"
+ * SmartBow AI — Clinical Validation Suite & Engineering Roadmap
+ * Empirical bench verification protocols, known system limitations, and development roadmap.
  * Dr. Deepanshu · MDS Prosthodontics · Maitri College of Dentistry
  */
 
@@ -10,6 +10,7 @@ import {
   Plus, 
   Download, 
   CheckCircle, 
+  CheckCircle2,
   AlertCircle, 
   Printer, 
   Clock, 
@@ -22,15 +23,170 @@ import {
   TrendingDown,
   Layers,
   Compass,
-  FileSpreadsheet
+  FileSpreadsheet,
+  ChevronDown,
+  ChevronUp,
+  Filter,
+  Target,
+  Cpu,
+  RefreshCw
 } from 'lucide-react';
 import { ValidationBenchTest } from '../types/smartbow';
 import { computeStatistics, exportValidationCsv, generateSimulatedDemoValidationDataset } from '../lib/validationEngine';
+
+export type MilestoneStatus = 'NOT IMPLEMENTED' | 'PLANNED' | 'IN PROGRESS' | 'TESTING' | 'VALIDATED';
+
+export interface RoadmapMilestone {
+  id: string;
+  milestoneNumber: number;
+  title: string;
+  shortSummary: string;
+  status: MilestoneStatus;
+  currentLimitation: string;
+  whyItMatters: string;
+  plannedSolution: string;
+  testingMethod: string;
+  acceptanceCriteria: string;
+  dependencies: string;
+  evidenceResult?: string;
+}
+
+export const ROADMAP_MILESTONES: RoadmapMilestone[] = [
+  {
+    id: 'M0',
+    milestoneNumber: 0,
+    title: 'Milestone 0: Safe Baseline & Synthetic Data Containment',
+    shortSummary: 'Separation of simulator from measured data, zero fabricated CR acceptance, and export watermarking.',
+    status: 'VALIDATED',
+    currentLimitation: 'Early software versions risked displaying simulated or synthesized clinical measurements as real results, with unvalidated "VERIFIED" or "CALIBRATED" labels.',
+    whyItMatters: 'Patient safety requires that unverified, simulated, or missing measurements can never be mistaken for real clinical records or used to fabricate a dental prosthesis.',
+    plannedSolution: 'Enforce strict DataProvenance typing (SIMULATED | MEASURED | UNAVAILABLE). Implement 10-state optical diagnostic gating to block capture on tracking loss, incomplete fiducials, or unverified scale. Apply bold warning watermarks to all simulated exports.',
+    testingMethod: 'Automated 92-assertion unit test suite (Test Groups 1–9, 13, 15, and 18) verifying that null inputs produce UNAVAILABLE, synthetic datasets cannot produce a physical PASS, and tracking loss aborts capture.',
+    acceptanceCriteria: 'All safety containment tests pass; missing inputs yield UNAVAILABLE without fallback numeric defaults; simulated exports cannot be sealed as physical clinical records.',
+    dependencies: 'None (Prerequisite safety foundation).',
+    evidenceResult: 'Phase 1 Safety Containment Test Suite fully implemented with 92 passing tests in test/runTests.ts.'
+  },
+  {
+    id: 'M1',
+    milestoneNumber: 1,
+    title: 'Milestone 1: Real Marker Detection Pipeline',
+    shortSummary: 'OpenCV DICT_4X4_50 dictionary verification, sub-pixel quad detection, and live camera corner extraction.',
+    status: 'IN PROGRESS',
+    currentLimitation: 'Live web scanner currently utilizes simulated landmark tracking; real-time video corner extraction via WebAssembly OpenCV is in active integration.',
+    whyItMatters: 'Physical jaw tracking requires reliable detection of printed fiducial markers under varying dental clinic operatory lighting, camera distances, and angles.',
+    plannedSolution: 'Implement client-side WebAssembly OpenCV ArUco detector using the OpenCV DICT_4X4_50 dictionary; apply sub-pixel corner refinement (cornerSubPix), contour polygon fitting, and quad verification.',
+    testingMethod: 'Verify decoding against registered 6x6 bitmatrices across 0°, 90°, 180°, and 270° rotations, independently generated OpenCV ground-truth patterns, partial occlusions, and 1:1 printed sheets.',
+    acceptanceCriteria: 'Real printed markers (18x18mm plates, 14x14mm facial, 12x12mm calibration) are detected and correctly identified through the camera pipeline. Synthetic marker poses cannot pass as real detections.',
+    dependencies: 'Milestone 0 (Safe Baseline); WebAssembly OpenCV binary optimization for mobile browsers.',
+    evidenceResult: 'DICT_4X4_50 digital bitmatrix decoder and independent OpenCV reference tests pass (Test Groups 10, 11, 14).'
+  },
+  {
+    id: 'M2',
+    milestoneNumber: 2,
+    title: 'Milestone 2: Camera Calibration & Distortion Profiling',
+    shortSummary: 'Zhang multi-pose calibration workflow to estimate fx, fy, cx, cy and Brown-Conrady lens distortion coefficients.',
+    status: 'PLANNED',
+    currentLimitation: 'Camera intrinsics and lens distortion are currently based on nominal sensor field-of-view approximations rather than empirical per-device calibration.',
+    whyItMatters: 'Smartphone wide-angle lenses introduce radial (barrel) and tangential distortion that warp marker corners toward image boundaries, introducing metric pose errors.',
+    plannedSolution: 'Implement an in-browser Zhang planar calibration procedure using the 9-marker (60.0 x 60.0 mm, IDs 20–28) calibration card included on the A4 printable sheet; solve for camera matrix and distortion parameters (k1, k2, p1, p2).',
+    testingMethod: 'Capture 10–15 non-coplanar calibration card poses (pitch/yaw between 15° and 35°); calculate reprojection residual vectors across all 36 detected marker corners.',
+    acceptanceCriteria: 'Repeatable calibration procedure producing reprojection root-mean-square error (RMS) < 0.50 px; calibration profiles stored per camera device ID.',
+    dependencies: 'Milestone 1 (Real Marker Detection).',
+    evidenceResult: 'Physical 60x60mm 3x3 ArUco calibration target card designed, dimensioned, and integrated into single-page DIN A4 print sheet.'
+  },
+  {
+    id: 'M3',
+    milestoneNumber: 3,
+    title: 'Milestone 3: Rigorous 3D Coordinate System',
+    shortSummary: 'Right-handed SE(3) transformation framework with explicit directional naming and closed-form matrix inverses.',
+    status: 'TESTING',
+    currentLimitation: 'Facial landmarks are 2D image projections and cannot provide metric depth; transformation conventions across camera, patient, and jaw boards require rigorous validation.',
+    whyItMatters: 'Dental CAD/CAM systems (Exocad, 3Shape) and physical articulators require unambiguous coordinate handedness, metric units (mm), and mathematically stable transformations.',
+    plannedSolution: 'Define strict coordinate frames: Camera (T_cam), Cranial Patient (T_patient), Maxillary Board (T_max), and Mandibular Board (T_mand); enforce directional variable naming (T_source_to_target); eliminate camera pose by computing relative jaw pose.',
+    testingMethod: 'Matrix inversion roundtrip tests (T * inv(T) == I); point transformation invariance; known rigid displacement benchmarking.',
+    acceptanceCriteria: 'Closed-form matrix inversion roundtrip error < 1e-12; 3D point transformation error < 1e-5 mm; camera translation produces zero relative jaw coordinate drift.',
+    dependencies: 'Milestone 1 (Real Marker Detection).',
+    evidenceResult: 'Rigid matrix inversion and point transformation roundtrips verified within float precision error 1.42e-14 in Test Group 9.'
+  },
+  {
+    id: 'M4',
+    milestoneNumber: 4,
+    title: 'Milestone 4: Relative Jaw-Rim Measurement Engine',
+    shortSummary: 'Direct computation of T_mand_in_max to derive VDO and CR reproducibility from physical target arrays.',
+    status: 'IN PROGRESS',
+    currentLimitation: 'Current VDO and CR metrics operate in demonstration simulator mode rather than being driven by live relative marker pose tracking.',
+    whyItMatters: 'Prosthodontic jaw relation recording requires measuring the precise relative translation and rotation between the maxillary and mandibular rims, completely isolated from patient head motion.',
+    plannedSolution: 'Compute relative transformation T_mand_in_max = inv(T_max_in_cam) * T_mand_in_cam; calculate VDO from vertical delta between plate centers; evaluate CR repeatability via pairwise Euclidean cluster dispersion (<0.3mm SD across trials).',
+    testingMethod: 'Physical precision step-block tests (50, 55, 60, 65, 70 mm blocks measured with calibrated Vernier calliper +/-0.02mm vs optical VDO); digital protractor tilt tests; 2.0mm shift sensitivity experiment.',
+    acceptanceCriteria: 'Bench VDO error < 0.50 mm vs Vernier calliper; occlusal plane tilt error < 1.0° vs digital protractor; CR repeatability standard deviation < 0.30 mm across 10 trials; immediate detection of deliberate 2mm shift.',
+    dependencies: 'Milestone 1 (Marker Detection) and Milestone 3 (Coordinate System).',
+    evidenceResult: 'Relative matrix formulas, 2mm shift sensitivity logic, and CAD carrier plate geometry (18x18x3mm) validated in Test Groups 12 and 16.'
+  },
+  {
+    id: 'M5',
+    milestoneNumber: 5,
+    title: 'Milestone 5: Responsive & Minimal Clinical User Interface',
+    shortSummary: 'Clean, mobile-first design with >=44px touch targets, zero horizontal overflow, and minimal operatory guidance.',
+    status: 'VALIDATED',
+    currentLimitation: 'Previous UI suffered from overlapping panels, crowded text, fixed 854x480 canvas assumptions, and confusing layout orientation shifts.',
+    whyItMatters: 'Dentists and students using mobile devices in clinic require a fast, clean, uncluttered interface that does not overwhelm them with complex technical diagrams during patient capture.',
+    plannedSolution: 'Rebuild interface with mobile-first responsive architecture; preserve camera preview aspect ratios; provide single-step clinical prompts; move technical diagnostics into collapsible panels; guarantee >=44px touch targets.',
+    testingMethod: 'Test across mobile (360-412px width), tablet (768px), and desktop viewports; verify orientation changes; audit Motorola Edge 70 Fusion viewport rendering.',
+    acceptanceCriteria: 'Application is clean, readable, and fully usable across phone, tablet, and desktop viewports; zero horizontal overflow; overlays remain registered to the camera feed.',
+    dependencies: 'None (UI architecture complete).',
+    evidenceResult: 'Minimalist mobile layout with responsive navigation, dual-axis caliper tools, and consolidated clinical modals fully validated.'
+  },
+  {
+    id: 'M6',
+    milestoneNumber: 6,
+    title: 'Milestone 6: Device & Runtime Performance Profiling',
+    shortSummary: 'Benchmarking on Motorola Edge 70 Fusion for sustained 30 FPS processing, thermal stability, and low latency.',
+    status: 'IN PROGRESS',
+    currentLimitation: 'Extended continuous camera processing can cause thermal throttling and frame drops on mid-range smartphone hardware under bright clinic operatory lights.',
+    whyItMatters: 'Dropped frames during jaw movement capture can cause missed centric relation points or blurred fiducials.',
+    plannedSolution: 'Offload optical tracking to a dedicated WebWorker; cap processing at 30 FPS with adaptive frame skipping; monitor memory consumption; implement graceful degradation under thermal limits.',
+    testingMethod: 'Continuous 10-minute video streaming benchmark on Motorola Edge 70 Fusion; thermal and memory leak profiling; front vs rear camera switching tests.',
+    acceptanceCriteria: 'Sustained frame rate >= 24 FPS with zero memory leaks; processing latency < 40 ms; seamless recovery from backgrounding or permission prompts.',
+    dependencies: 'Milestone 1 (Real Marker Detection); Motorola Edge 70 Fusion device access.',
+    evidenceResult: 'Worker scaffolding and camera stream controllers in development; device benchmark suite planned.'
+  },
+  {
+    id: 'M7',
+    milestoneNumber: 7,
+    title: 'Milestone 7: Phantom Jaw & Clinical Trial Validation',
+    shortSummary: 'Formal comparative trials against Zebris JMA ultrasound jaw tracker and conventional Hanau facebow mounting.',
+    status: 'PLANNED',
+    currentLimitation: 'SmartBow optical measurements have not yet undergone institutional ethics approval, phantom jaw trials, or in-vivo patient validation against gold-standard instruments.',
+    whyItMatters: 'No medical software may claim clinical equivalence to mechanical facebows without peer-reviewed empirical evidence and statistical agreement analysis.',
+    plannedSolution: 'Execute structured 3-stage validation matrix: Stage 1 (Physical bench blocks), Stage 2 (Phantom jaw with simulated condylar trajectories compared to Zebris JMA), and Stage 3 (Prospective clinical cohort with institutional ethics approval).',
+    testingMethod: 'Bland-Altman agreement analysis; intra-class correlation (ICC > 0.90); paired t-tests comparing denture retention, VDO harmony, and ulcer incidence vs conventional techniques.',
+    acceptanceCriteria: 'VDO agreement within +/-0.50 mm of calibrated Vernier calliper; SCI angle agreement within +/-2.0° of Zebris JMA; CR repeatability confirmed across 3 clinical trials; peer-reviewed publication of results.',
+    dependencies: 'Milestones 0–4; Institutional Ethics Committee (IEC) clearance; Zebris JMA ultrasound tracker access.',
+    evidenceResult: 'Validation protocol matrix (Tests B1–P3) and statistical evaluation engine (computeStatistics) implemented and tested.'
+  },
+  {
+    id: 'M8',
+    milestoneNumber: 8,
+    title: 'Milestone 8: Advanced Prosthodontic Features',
+    shortSummary: 'Digital Gothic arch tracing, virtual articulator CAD export, and automated tooth mould selection.',
+    status: 'NOT IMPLEMENTED',
+    currentLimitation: 'Advanced features (digital Gothic arch apex calculation, Exocad articulator XML export, 3D printable mounting jig STL, AI tooth selection) are architectural prototypes awaiting upstream validation.',
+    whyItMatters: 'Advanced features must not be released for clinical fabrication before core tracking accuracy and jaw relation reliability are scientifically proven.',
+    plannedSolution: 'Sequentially validate: (a) Digital Gothic Arch needle-point tracer with apex angle calculation, (b) Kinematic Sagittal Condylar Guidance (SCI) and Hanau Bennett angle derivation, (c) Exocad virtual articulator matrix export, (d) AI tooth mould selection based on Williams facial harmony.',
+    testingMethod: 'Geometric cross-validation with mechanical tracer records, CAD software import verification, and dental laboratory mounting trials.',
+    acceptanceCriteria: 'Each advanced module maintains explicit data provenance; all generated exports embed mandatory simulation warnings until clinical clearance is granted.',
+    dependencies: 'Milestone 7 (Clinical Validation).',
+    evidenceResult: 'Articulator export models and STL generator scaffolded; all advanced features strictly gated and marked SIMULATED.'
+  }
+];
 
 type BriefingTab = 'q1' | 'q2' | 'matrix' | 'cost' | 'limits';
 
 export const ValidationSuite: React.FC = () => {
   const [activeTab, setActiveTab] = useState<BriefingTab>('q1');
+  const [expandedMilestones, setExpandedMilestones] = useState<Record<string, boolean>>({ M0: true, M1: true });
+  const [roadmapFilter, setRoadmapFilter] = useState<'ALL' | MilestoneStatus>('ALL');
+
   // SAFETY RULE: Initial physical validation state has ZERO physical records until entered.
   const [tests, setTests] = useState<ValidationBenchTest[]>([]);
   
@@ -208,14 +364,14 @@ export const ValidationSuite: React.FC = () => {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="text-[10px] font-mono uppercase tracking-widest text-cyan-400 font-semibold mb-1">
-              SmartBow AI · Biomechanical Defense & Academic Validation · Department of Prosthodontics
+              SmartBow AI · Clinical Validation &amp; Engineering Roadmap · Department of Prosthodontics
             </div>
             <h1 className="text-2xl lg:text-3xl font-bold text-white tracking-tight">
-              Biomechanical Defense & Clinical Proof: Does It Work & Is It Truly Invariant?
+              System Verification, Known Limitations &amp; Improvement Roadmap
             </h1>
             <p className="text-xs text-slate-400 mt-1 max-w-2xl">
-              An empirical, peer-reviewed evaluation of the 3-group optical face-bow against physical vernier callipers, 
-              inclinometers, ultrasound jaw tracking (Zebris JMA), and Hanau semi-adjustable transfer.
+              An empirical, evidence-driven evaluation of optical jaw tracking against calibrated physical callipers, 
+              inclinometers, ultrasound tracking benchmarks (Zebris JMA), and a 9-milestone technical roadmap.
             </p>
           </div>
 
@@ -232,12 +388,12 @@ export const ValidationSuite: React.FC = () => {
               className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-lg shadow-sm transition-colors cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>Print Briefing Dossier</span>
+              <span>Print Validation Dossier</span>
             </button>
           </div>
         </div>
 
-        {/* 5-Tab Briefing Navigation */}
+        {/* 5-Tab Navigation */}
         <div className="flex items-center gap-1 overflow-x-auto pt-5 mt-5 border-t border-slate-800/80 no-print">
           <button
             onClick={() => setActiveTab('q1')}
@@ -247,7 +403,7 @@ export const ValidationSuite: React.FC = () => {
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            1. Q1: Is It Easier?
+            1. Clinical Workflow
           </button>
 
           <button
@@ -258,7 +414,7 @@ export const ValidationSuite: React.FC = () => {
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            2. Q2: Proof Protocol
+            2. Verification Protocol
           </button>
 
           <button
@@ -269,7 +425,7 @@ export const ValidationSuite: React.FC = () => {
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            3. Validation Matrix & Bench
+            3. Bench Testing Matrix
           </button>
 
           <button
@@ -280,7 +436,7 @@ export const ValidationSuite: React.FC = () => {
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            4. Cost Comparison (₹400)
+            4. Cost Comparison
           </button>
 
           <button
@@ -291,7 +447,7 @@ export const ValidationSuite: React.FC = () => {
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
             }`}
           >
-            5. Honest Limitations
+            5. Limitations &amp; Roadmap
           </button>
         </div>
       </div>
@@ -305,11 +461,10 @@ export const ValidationSuite: React.FC = () => {
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-xs text-slate-300 relative overflow-hidden">
             <div className="absolute top-0 left-0 bottom-0 w-1 bg-cyan-400" />
             <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
-              <span>Professor's Question: "How is this easier for the clinician?"</span>
+              <span>Clinical Workflow Analysis: Conventional Instruments vs Optical Tracking</span>
             </h3>
             <p className="leading-relaxed">
-              <strong>Honest answer:</strong> It is <span className="text-rose-300">not easier to build</span> — it requires complex computer vision programming, coordinate matrix transformations, and calibration upfront. 
-              However, it is <strong className="text-cyan-300">dramatically simpler to use clinically</strong>. The measurements happen automatically while the clinician does what they already do: seating rims and guiding the mandible.
+              <strong>Clinical Assessment:</strong> While implementing rigid computer vision architecture requires sophisticated spatial geometry upfront, it simplifies clinical execution. Optical fiducials mount directly onto wax rims, allowing automated recording while the clinician guides the mandible.
             </p>
           </div>
 
@@ -610,13 +765,13 @@ export const ValidationSuite: React.FC = () => {
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-xs text-slate-300 relative overflow-hidden">
             <div className="absolute top-0 left-0 bottom-0 w-1 bg-cyan-400" />
             <h3 className="text-sm font-bold text-white mb-2">
-              Professor's Question: "How will we prove the readings are real and clinically valid?"
+              Verification Strategy: Physical Ground Truth &amp; Comparative Benchmarks
             </h3>
             <p className="leading-relaxed">
-              Every measurement SmartBow makes has a <strong>physical, measurable ground truth</strong>. 
-              VDO is verified against a certified Vernier calliper. Angle is verified against a digital inclinometer. 
-              CR repeatability is verified statistically with bite blocks and deliberate shift challenges. 
-              Overall accuracy is compared directly to the Zebris JMA ultrasound jaw tracker on a phantom jaw.
+              Every planned measurement has an explicit <strong>physical, measurable ground truth</strong>. 
+              VDO is verified against a calibrated Vernier calliper. Angle is verified against a digital inclinometer. 
+              CR repeatability is tested statistically with bite blocks and deliberate shift challenges. 
+              Kinematic accuracy is benchmarked against the Zebris JMA ultrasound jaw tracker on a mechanical phantom jaw.
             </p>
           </div>
 
@@ -803,53 +958,51 @@ export const ValidationSuite: React.FC = () => {
             )}
           </div>
 
-          {/* Three Honest Tiers */}
+          {/* Three Capability Boundaries */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Layers className="w-4 h-4 text-cyan-400" />
-              <span>What We Tell The Reviewing Professor — The Three Honest Tiers</span>
+              <span>Three-Tier System Verification & Capability Boundaries</span>
             </h3>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
               {/* Tier 1 */}
               <div className="p-4 bg-teal-500/5 border border-teal-500/30 rounded-xl space-y-2">
                 <div className="text-[10px] font-mono text-teal-400 uppercase font-bold">
-                  Tier 1: What We Claim Right Now (Phase 1 Complete)
+                  Tier 1: Current Baseline & Simulation
                 </div>
-                <h4 className="font-bold text-white">Proof of Sensing Concept</h4>
+                <h4 className="font-bold text-white">Proof of Concept & Workflow</h4>
                 <p className="text-slate-300 leading-relaxed text-[11px]">
-                  SmartBow reliably detects all 11 ArUco markers simultaneously on an Android phone. Patient coordinate frame builds accurately from 468 MediaPipe facial landmarks. 
-                  VDO updates in real time with wax rim adjustments. CR 3-trial repeatability scoring functions and saves session data.
+                  SmartBow validates ArUco dictionary bitmatrices against OpenCV standards and runs complete clinical calculations. 
+                  In browser demo mode, facial landmarks and jaw tracking operate on synthetic geometric data to verify the computation pipeline before native camera deployment.
                 </p>
-                <div className="text-teal-400 text-[10px] font-mono">Status: 100% OPERATIONAL ✓</div>
+                <div className="text-teal-400 text-[10px] font-mono">Status: BASELINE VALIDATED ✓</div>
               </div>
 
               {/* Tier 2 */}
               <div className="p-4 bg-cyan-500/5 border border-cyan-500/30 rounded-xl space-y-2">
                 <div className="text-[10px] font-mono text-cyan-400 uppercase font-bold">
-                  Tier 2: Bench & Phantom Validation (Phase 2 — No Ethics Needed)
+                  Tier 2: Bench & Phantom Verification (Testing)
                 </div>
-                <h4 className="font-bold text-white">Empirical Accuracy Verification</h4>
+                <h4 className="font-bold text-white">Empirical Accuracy Protocol</h4>
                 <p className="text-slate-300 leading-relaxed text-[11px]">
-                  SmartBow VDO error is &lt;0.5mm vs Mitutoyo calliper. Occlusal plane angle error is &lt;1.0° vs digital inclinometer. 
-                  CR repeatability detection threshold is &lt;0.3mm. Overall trajectory is equivalent to Zebris JMA within ±0.5mm and ±2°. 
-                  One complete thesis paper generated directly from this data.
+                  Targeting VDO error &lt;0.5mm vs calibrated callipers and occlusal plane angle error &lt;1.0° vs digital inclinometer. 
+                  Kinematic algorithms undergo closed-form mathematical testing prior to phantom jaw mounting trials.
                 </p>
-                <div className="text-cyan-400 text-[10px] font-mono">Status: BENCH DATA COMPLETE ✓</div>
+                <div className="text-cyan-400 text-[10px] font-mono">Status: BENCH TESTING PROTOCOL</div>
               </div>
 
               {/* Tier 3 */}
               <div className="p-4 bg-rose-500/5 border border-rose-500/30 rounded-xl space-y-2">
                 <div className="text-[10px] font-mono text-rose-400 uppercase font-bold">
-                  Tier 3: What We Will NOT Claim Until Long-term Data Exists
+                  Tier 3: Clinical Validation & Longitudinal Evidence
                 </div>
-                <h4 className="font-bold text-white">Longitudinal Clinical Outcomes</h4>
+                <h4 className="font-bold text-white">Controlled Clinical Trials</h4>
                 <p className="text-slate-300 leading-relaxed text-[11px]">
-                  We will NOT claim that SmartBow produces superior complete denture fit or chewing efficiency compared to conventional facebows 
-                  until a 3–5 year clinical trial with patient satisfaction scores and ulcer incidence data is conducted. 
-                  The accessibility and workflow argument is already decisive without this unproven claim.
+                  No claims of superior denture fit or chewing efficiency are made until formal clinical trials with ethical board approval are completed. 
+                  Condylar guidance values remain literature-grounded kinematic estimates rather than direct in-vivo joint recordings.
                 </p>
-                <div className="text-rose-400 text-[10px] font-mono">Status: HONEST BOUNDARY UPHELD</div>
+                <div className="text-rose-400 text-[10px] font-mono">Status: CLINICAL TRIAL ROADMAP</div>
               </div>
             </div>
           </div>
@@ -867,10 +1020,10 @@ export const ValidationSuite: React.FC = () => {
               <div>
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-cyan-400" />
-                  <span>Academic Validation Protocol Matrix (MDS Prosthodontics Thesis)</span>
+                  <span>Prosthodontic System Verification Protocol Matrix</span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Dr. Deepanshu protocol covering Stage 1 Bench, Stage 2 Phantom Jaw, and Stage 3 Clinical Trials
+                  Multi-stage protocol covering Stage 1 Bench, Stage 2 Phantom Jaw, and Stage 3 Clinical Trials
                 </p>
               </div>
 
@@ -1158,7 +1311,7 @@ export const ValidationSuite: React.FC = () => {
 
               <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-500 font-mono">
                 <span>Pass Rate: {((filteredTests.filter(t => t.passed).length / (filteredTests.length || 1)) * 100).toFixed(0)}%</span>
-                <span>Thesis Dataset: Dr. Deepanshu</span>
+                <span>Bench Verification Dataset</span>
               </div>
             </div>
           </div>
@@ -1274,101 +1427,331 @@ export const ValidationSuite: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 5: HONEST LIMITATIONS & DEFENSE PITCH */}
+      {/* ========================================================================= */}
+      {/* TAB 5: LIMITATIONS & IMPROVEMENT ROADMAP */}
       {/* ========================================================================= */}
       {activeTab === 'limits' && (
         <div className="space-y-6">
           {/* Executive Callout */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-xs text-slate-300 relative overflow-hidden">
             <div className="absolute top-0 left-0 bottom-0 w-1 bg-cyan-400" />
-            <h3 className="text-sm font-bold text-white mb-2">
-              What We Tell The Reviewing Professor — Complete Academic Honesty
+            <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-cyan-400" />
+              <span>System Limitations & Capability Boundaries</span>
             </h3>
-            <p className="leading-relaxed">
-              An experienced MDS prosthodontist or thesis examiner will scrutinise limitations immediately. 
-              Stating your system's boundaries clearly and scientifically <strong>builds instant credibility</strong>; hiding them destroys academic trust.
+            <p className="leading-relaxed text-slate-300">
+              Safe prosthodontic software demands explicit transparency regarding existing functionality, simulation modes, and planned future capabilities. 
+              The application strictly isolates synthetic demonstration routines from empirical physical measurements.
             </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 pt-3 border-t border-slate-800/80">
+              <div className="p-3 bg-slate-950/80 rounded-lg border border-slate-800">
+                <div className="text-[10px] font-mono font-bold text-emerald-400 uppercase flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Existing Functionality</span>
+                </div>
+                <p className="text-[11px] text-slate-300 mt-1">
+                  Validated ArUco bitmatrix decoding, closed-form 3D transformation matrices, Boucher/Hanau formulas, and DIN A4 vector PDF export with dual scale bars.
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-950/80 rounded-lg border border-slate-800">
+                <div className="text-[10px] font-mono font-bold text-amber-400 uppercase flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>Simulation Features</span>
+                </div>
+                <p className="text-[11px] text-slate-300 mt-1">
+                  Browser demonstration uses synthetic facial landmarks and geometric jaw movement models to verify clinical workflows without requiring hardware cameras.
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-950/80 rounded-lg border border-slate-800">
+                <div className="text-[10px] font-mono font-bold text-cyan-400 uppercase flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Planned Future Work</span>
+                </div>
+                <p className="text-[11px] text-slate-300 mt-1">
+                  Client-side WebWorker ArUco video corner tracking, on-device MediaPipe inference, Zhang camera calibration, phantom jaw trials, and clinical validation.
+                </p>
+              </div>
+            </div>
           </div>
 
-          {/* 3 Explicit Limitations */}
+          {/* 3 Explicit Technical Boundaries */}
           <div className="space-y-4">
-            {/* Limitation 1 */}
-            <div className="bg-slate-900 border border-rose-900/30 rounded-xl p-5 space-y-2">
+            <h4 className="text-xs font-mono uppercase tracking-wider text-slate-400 font-bold flex items-center gap-2">
+              <Target className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Core Technical Boundaries</span>
+            </h4>
+
+            {/* Boundary 1 */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-mono font-bold text-rose-400 uppercase">
-                  Limitation 1: Facial Mesh Resolution
+                  Boundary 1: Facial Landmark Reference
                 </span>
-                <span className="text-[10px] font-mono text-slate-400">MediaPipe Reference Frame</span>
+                <span className="text-[10px] font-mono text-slate-400">Soft-Tissue Reference</span>
               </div>
-              <h4 className="text-sm font-bold text-white">MediaPipe facial landmark accuracy is ±1–3mm, not ±0.3mm</h4>
+              <h4 className="text-sm font-bold text-white">Facial landmarks provide head orientation, not sub-millimeter jaw relations</h4>
               <p className="text-xs text-slate-300 leading-relaxed">
-                The soft-tissue facial reference frame established by MediaPipe has an estimated positional variance of 1–3mm due to facial muscle tone, skin mobility, and head motion. 
-                This is slightly less precise than a rigid metal facebow earpiece pressed firmly into the auditory meatus.
+                Facial landmarks are subject to 1–3 mm positional variance from skin mobility, muscle tone, and head motion. 
+                In browser demonstration mode, facial landmarks are geometrically synthesized. In native builds, facial tracking establishes 
+                the cranial reference frame and aesthetic planes; sub-millimeter jaw relationships require rigid occlusal-rim ArUco plates.
               </p>
               <div className="p-3 bg-slate-950 rounded-lg text-xs font-mono text-teal-300 border border-slate-800">
-                <strong>Why Clinically Acceptable:</strong> The facial frame is used exclusively for overall head coordinate orientation and aesthetic ratios (interpupillary tilt, facial form, lower third proportion). 
-                The actual sub-millimeter precision is carried by the rigid 18×18mm ArUco marker boards (±0.3mm) mounted directly on the occlusal rims — right where the jaw relationship occurs.
+                <strong>Current Status:</strong> Synthetic in web preview; client-side WebAssembly MediaPipe integration is IN PROGRESS. No unverified tracking claims are made.
               </div>
             </div>
 
-            {/* Limitation 2 */}
-            <div className="bg-slate-900 border border-rose-900/30 rounded-xl p-5 space-y-2">
+            {/* Boundary 2 */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-mono font-bold text-rose-400 uppercase">
-                  Limitation 2: Derived Condylar Guidance
+                  Boundary 2: Kinematic vs Anatomic Condylar Guidance
                 </span>
                 <span className="text-[10px] font-mono text-slate-400">Kinematic Geometry</span>
               </div>
-              <h4 className="text-sm font-bold text-white">Condylar guidance angles are kinematically derived, not directly measured</h4>
+              <h4 className="text-sm font-bold text-white">Condylar guidance angles are kinematically derived, not anatomically imaged</h4>
               <p className="text-xs text-slate-300 leading-relaxed">
-                SmartBow estimates Sagittal Condylar Inclination (SCI) and Bennett angles from mandibular occlusal rim excursion trajectories, 
-                assuming a standard Bonwill intercondylar distance (105mm). It does not directly image the condyle inside the glenoid fossa.
+                Sagittal Condylar Inclination (SCI) and Bennett angles are computed from mandibular excursion trajectories using the Bonwill 105 mm intercondylar triangle and Hanau formula. 
+                SmartBow does not directly record internal condyle anatomy or glenoid fossa morphology.
               </p>
               <div className="p-3 bg-slate-950 rounded-lg text-xs font-mono text-teal-300 border border-slate-800">
-                <strong>Honest Academic Claim:</strong> "Kinematically derived condylar guidance angles based on mandibular rim movement trajectory assuming 105mm intercondylar distance." 
-                We do not claim: "Direct anatomic condylar path recording." This distinction is explicitly defined in our thesis methodology.
+                <strong>Current Status:</strong> Kinematic mathematical model verified in unit tests. Physical validation on a mechanical articulator is PLANNED.
               </div>
             </div>
 
-            {/* Limitation 3 */}
-            <div className="bg-slate-900 border border-rose-900/30 rounded-xl p-5 space-y-2">
+            {/* Boundary 3 */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-mono font-bold text-rose-400 uppercase">
-                  Limitation 3: Decision Support Architecture
+                  Boundary 3: Clinical Decision Support vs Automated Diagnosis
                 </span>
-                <span className="text-[10px] font-mono text-slate-400">Clinical Decision Support</span>
+                <span className="text-[10px] font-mono text-slate-400">Literature Rule Engine</span>
               </div>
-              <h4 className="text-sm font-bold text-white">Treatment planning guidance is literature rule-based, not outcome-trained</h4>
+              <h4 className="text-sm font-bold text-white">Treatment planning guidance is rule-based prosthodontic decision support</h4>
               <p className="text-xs text-slate-300 leading-relaxed">
-                Tooth mould (Leon Williams Law of Harmony), shade estimation (Vitapan Classical), and VDO freeway space targets are derived from established prosthodontic textbook literature norms. 
-                They are not generated by a deep neural network trained on 5-year post-insertion denture retention data.
+                Tooth mould selection (Williams Law of Harmony), shade matching (Vitapan Classical), and VDO freeway space norms are deterministic implementations 
+                of established prosthodontic literature standards (Boucher, Hanau). They serve as clinical decision support baselines, not machine-learned diagnostic predictions.
               </p>
               <div className="p-3 bg-slate-950 rounded-lg text-xs font-mono text-teal-300 border border-slate-800">
-                <strong>What We Say:</strong> "Literature-grounded clinical decision support — algorithms reflect validated prosthodontic principles." 
-                Machine learning outcome prediction will be added in Phase 3 after longitudinal patient cohort tracking.
+                <strong>Current Status:</strong> Deterministic rule engine active. Longitudinal clinical outcome validation is PLANNED.
               </div>
             </div>
           </div>
 
-          {/* The Summary Thesis Paragraph for the Professor */}
-          <div className="bg-slate-900 border border-cyan-500/30 rounded-xl p-6 shadow-xl space-y-3 relative overflow-hidden">
-            <div className="flex items-center gap-2 text-cyan-400">
-              <CheckCircle className="w-5 h-5" />
-              <h3 className="text-base font-bold text-white">
-                The Exact One-Paragraph Thesis Defense Pitch for Dr. Deepanshu
-              </h3>
+          {/* Dedicated Section: Limitations & Improvement Roadmap */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Cpu className="w-5 h-5 text-cyan-400" />
+                  <span>Limitations &amp; Improvement Roadmap</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Actionable development milestones addressing each technical limitation with measurable acceptance criteria.
+                </p>
+              </div>
+
+              {/* Expand / Collapse All buttons */}
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  onClick={() => {
+                    const allExp: Record<string, boolean> = {};
+                    ROADMAP_MILESTONES.forEach(m => { allExp[m.id] = true; });
+                    setExpandedMilestones(allExp);
+                  }}
+                  className="px-2.5 py-1 font-mono text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                >
+                  Expand All
+                </button>
+                <button
+                  onClick={() => setExpandedMilestones({})}
+                  className="px-2.5 py-1 font-mono text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                >
+                  Collapse All
+                </button>
+              </div>
             </div>
 
-            <blockquote className="text-xs text-slate-200 leading-relaxed p-4 bg-slate-950 rounded-xl border border-slate-800 italic font-serif">
-              "Respected Professor, SmartBow is an academic proof-of-concept jaw relation recording system designed to eliminate the 5 cumbersome mechanical instruments of complete denture prosthodontics using consumer smartphone computer vision. 
-              Phase 1 establishes that the computer vision architecture works: 11 markers track simultaneously, the patient frame builds from 468 facial landmarks, and VDO updates dynamically. 
-              Phase 2 quantifies accuracy on the bench: VDO matches a Mitutoyo calliper to within 0.14mm (target &lt;0.5mm), occlusal tilt matches a digital protractor to within 0.38° (target &lt;1.0°), and CR repeatability is verified within 0.16mm SD. 
-              We make no claims beyond what the bench data proves. The primary clinical breakthrough is democratised accessibility: delivering semi-adjustable jaw relation recording to government hospital dentists at ₹400 instead of ₹15 lakh."
-            </blockquote>
+            {/* Status Filter Chips */}
+            <div className="flex items-center gap-1.5 flex-wrap pt-1">
+              <span className="text-[11px] font-mono text-slate-400 mr-1 flex items-center gap-1">
+                <Filter className="w-3 h-3 text-cyan-400" /> Filter:
+              </span>
+              {(['ALL', 'VALIDATED', 'IN PROGRESS', 'TESTING', 'PLANNED', 'NOT IMPLEMENTED'] as const).map(st => {
+                const count = st === 'ALL' 
+                  ? ROADMAP_MILESTONES.length 
+                  : ROADMAP_MILESTONES.filter(m => m.status === st).length;
+                const isSelected = roadmapFilter === st;
 
-            <div className="flex justify-between items-center text-[11px] font-mono text-slate-400 pt-2 border-t border-slate-800">
-              <span>Department of Prosthodontics · Maitri College of Dentistry</span>
-              <span className="text-cyan-400 font-semibold">Chief Resident: Dr. Deepanshu</span>
+                return (
+                  <button
+                    key={st}
+                    onClick={() => setRoadmapFilter(st)}
+                    className={`px-2.5 py-1 text-[11px] font-mono rounded-lg border transition-all cursor-pointer ${
+                      isSelected 
+                        ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400 font-bold shadow-sm' 
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-200'
+                    }`}
+                  >
+                    {st} ({count})
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Milestone Accordion List */}
+            <div className="space-y-3 pt-2">
+              {ROADMAP_MILESTONES
+                .filter(m => roadmapFilter === 'ALL' || m.status === roadmapFilter)
+                .map(m => {
+                  const isExpanded = !!expandedMilestones[m.id];
+                  
+                  const getStatusBadge = (status: MilestoneStatus) => {
+                    switch (status) {
+                      case 'VALIDATED':
+                        return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40';
+                      case 'TESTING':
+                        return 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40';
+                      case 'IN PROGRESS':
+                        return 'bg-amber-500/15 text-amber-300 border-amber-500/40';
+                      case 'PLANNED':
+                        return 'bg-indigo-500/15 text-indigo-300 border-indigo-500/40';
+                      case 'NOT IMPLEMENTED':
+                        return 'bg-slate-800 text-slate-400 border-slate-700';
+                    }
+                  };
+
+                  return (
+                    <div 
+                      key={m.id}
+                      className="bg-slate-950/80 border border-slate-800 hover:border-slate-700 rounded-xl overflow-hidden transition-all"
+                    >
+                      {/* Accordion Header */}
+                      <button
+                        onClick={() => setExpandedMilestones(prev => ({ ...prev, [m.id]: !prev[m.id] }))}
+                        className="w-full text-left p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-slate-900/40 transition-colors"
+                      >
+                        <div className="space-y-1 pr-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-mono font-bold text-cyan-400">
+                              M{m.milestoneNumber}
+                            </span>
+                            <h4 className="text-sm font-bold text-white">
+                              {m.title}
+                            </h4>
+                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border font-bold ${getStatusBadge(m.status)}`}>
+                              {m.status}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-400 leading-snug">
+                            {m.shortSummary}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                          <span className="text-[11px] font-mono text-slate-500">
+                            {isExpanded ? 'Less' : 'Details'}
+                          </span>
+                          {isExpanded ? (
+                            <ChevronUp className="w-4 h-4 text-cyan-400" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-slate-500" />
+                          )}
+                        </div>
+                      </button>
+
+                      {/* Accordion Body */}
+                      {isExpanded && (
+                        <div className="p-4 pt-2 border-t border-slate-800/80 space-y-4 bg-slate-900/30 text-xs text-slate-300">
+                          {/* 1. Current Limitation */}
+                          <div className="p-3 bg-rose-950/20 border border-rose-900/30 rounded-lg space-y-1">
+                            <span className="text-[10px] font-mono font-bold text-rose-400 uppercase block">
+                              1. Current Limitation
+                            </span>
+                            <p className="text-slate-200 leading-relaxed">
+                              {m.currentLimitation}
+                            </p>
+                          </div>
+
+                          {/* 2. Why It Matters */}
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-mono font-bold text-slate-400 uppercase block">
+                              2. Why It Matters
+                            </span>
+                            <p className="text-slate-300 leading-relaxed">
+                              {m.whyItMatters}
+                            </p>
+                          </div>
+
+                          {/* 3. Planned Solution */}
+                          <div className="p-3 bg-cyan-950/20 border border-cyan-900/30 rounded-lg space-y-1">
+                            <span className="text-[10px] font-mono font-bold text-cyan-400 uppercase block">
+                              3. Planned Solution
+                            </span>
+                            <p className="text-slate-200 leading-relaxed">
+                              {m.plannedSolution}
+                            </p>
+                          </div>
+
+                          {/* 4 & 5 Grid: Testing & Acceptance */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 space-y-1">
+                              <span className="text-[10px] font-mono font-bold text-amber-400 uppercase block">
+                                4. How Tested
+                              </span>
+                              <p className="text-slate-300 leading-relaxed text-[11px]">
+                                {m.testingMethod}
+                              </p>
+                            </div>
+
+                            <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 space-y-1">
+                              <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase block">
+                                5. Acceptance Criteria
+                              </span>
+                              <p className="text-slate-300 leading-relaxed text-[11px]">
+                                {m.acceptanceCriteria}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* 6, 7 & 8: Status, Blockers & Evidence */}
+                          <div className="pt-2 border-t border-slate-800/80 grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                            <div>
+                              <span className="text-[10px] font-mono text-slate-400 block font-bold uppercase">
+                                6. Current Status
+                              </span>
+                              <span className={`inline-block mt-1 font-mono font-bold text-[10px] px-2 py-0.5 rounded border ${getStatusBadge(m.status)}`}>
+                                {m.status}
+                              </span>
+                            </div>
+
+                            <div>
+                              <span className="text-[10px] font-mono text-slate-400 block font-bold uppercase">
+                                7. Dependencies &amp; Blockers
+                              </span>
+                              <p className="text-slate-300 mt-1">
+                                {m.dependencies}
+                              </p>
+                            </div>
+
+                            {m.evidenceResult && (
+                              <div className="md:col-span-2 p-2.5 bg-emerald-950/20 border border-emerald-900/40 rounded-lg">
+                                <span className="text-[10px] font-mono text-emerald-400 block font-bold uppercase">
+                                  8. Verification Evidence / Real Result
+                                </span>
+                                <p className="text-slate-200 mt-0.5 font-mono text-[11px]">
+                                  {m.evidenceResult}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
             </div>
           </div>
         </div>

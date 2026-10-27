@@ -403,7 +403,7 @@ export function renderFullA4PrintSheetSvg(): string {
   <g transform="translate(105, 16)">
     <text x="0" y="0" font-size="3.5" font-weight="800" fill="#0F172A" text-anchor="middle" letter-spacing="0.2">SMARTBOW AI — 1:1 CALIBRATED ARUCO FIDUCIAL PRINT SHEET</text>
     <text x="0" y="4.2" font-size="2.1" font-weight="600" fill="#0284C7" text-anchor="middle">OPENCV DICT_4X4_50 SPECIFICATION · PRECISION PROSTHODONTIC RESEARCH SPEC</text>
-    <text x="0" y="8.2" font-size="2.0" font-weight="800" fill="#DC2626" text-anchor="middle">MANDATORY: PRINT AT 100% SCALE (ACTUAL SIZE) · DO NOT FIT TO PAGE</text>
+    <text x="0" y="8.2" font-size="1.8" font-weight="800" fill="#DC2626" text-anchor="middle">PRINT AT ACTUAL SIZE — 100% SCALE · DISABLE FIT TO PAGE · VERIFY PRINTED DIMENSIONS BEFORE USE</text>
   </g>
 
   <!-- Section 0: Dual-Axis Physical Caliper Scale Verification (Horizontal 100.0 mm × Vertical 50.0 mm) -->

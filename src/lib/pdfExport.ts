@@ -134,9 +134,9 @@ export function generateVectorA4Pdf(options?: { compress?: boolean }): jsPDF {
   pdf.setTextColor(2, 132, 199);
   pdf.text('OPENCV DICT_4X4_50 SPECIFICATION · PRECISION PROSTHODONTIC RESEARCH SPEC', 105, 20.2, { align: 'center' });
 
-  pdf.setFontSize(7);
+  pdf.setFontSize(6.2);
   pdf.setTextColor(220, 38, 38);
-  pdf.text('MANDATORY: PRINT AT 100% SCALE (ACTUAL SIZE) · DO NOT FIT TO PAGE', 105, 24.2, { align: 'center' });
+  pdf.text('PRINT AT ACTUAL SIZE — 100% SCALE · DISABLE FIT TO PAGE · VERIFY PRINTED DIMENSIONS BEFORE USE', 105, 24.2, { align: 'center' });
 
   // --- SECTION 0: DUAL-AXIS PHYSICAL CALIPER SCALE VERIFICATION ---
   const s0X = 16;

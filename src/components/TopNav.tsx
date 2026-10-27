@@ -47,7 +47,7 @@ export const TopNav: React.FC<TopNavProps> = ({
     { id: 'gothic', label: 'Gothic Arch', icon: Compass },
     { id: 'facial', label: 'Facial Form', icon: Smile },
     { id: 'articulator', label: '3D Articulator', icon: Box },
-    { id: 'validation', label: 'Academic Defense & Validation', icon: ShieldCheck },
+    { id: 'validation', label: 'Validation & Roadmap', icon: ShieldCheck },
   ];
 
   return (

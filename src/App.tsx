@@ -438,7 +438,7 @@ export default function App() {
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
             <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white">Academic Defense &amp; Clinical Validation Suite</h3>
+              <h3 className="text-sm font-bold text-white">Clinical Validation &amp; Engineering Roadmap</h3>
               <button
                 onClick={() => setIsValidationOpen(false)}
                 className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
