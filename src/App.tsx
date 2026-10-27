@@ -1,25 +1,25 @@
 /**
  * SmartBow AI - Smartphone-based Dental Jaw Relation & Treatment Planning System
  * Replacing physical facebow, Fox plane, Willis gauge, gothic arch tracer, and protrusive records
- * Dr. Deepanshu · MDS Prosthodontics · Maitri College of Dentistry · Version 1.0
+ * Dr. Deepanshu · MDS Prosthodontics · Maitri College of Dentistry · Version 2.0
  */
 
 import React, { useState, useEffect } from 'react';
-import { TopNav, ActiveTab } from './components/TopNav';
+import { Navigation, MainNavTab } from './components/Navigation';
+import { HomeDashboard } from './components/HomeDashboard';
 import { LiveScanner } from './components/LiveScanner';
-import { VdoDashboard } from './components/VdoDashboard';
-import { CrRecorder } from './components/CrRecorder';
-import { GothicArchTracer } from './components/GothicArchTracer';
-import { FacialAnalysisView } from './components/FacialAnalysisView';
-import { VirtualArticulator3D } from './components/VirtualArticulator3D';
+import { RecordsView, RecordsSubtab } from './components/RecordsView';
+import { SettingsView } from './components/SettingsView';
 import { ValidationSuite } from './components/ValidationSuite';
 import { PrintableMarkersModal } from './components/PrintableMarkersModal';
 import { ClinicalReportModal } from './components/ClinicalReportModal';
 import { PatientDatabaseModal } from './components/PatientDatabaseModal';
 import { PatientSetupModal } from './components/PatientSetupModal';
 import { UserManualModal } from './components/UserManualModal';
-import { PatientCase, CrRecord, GothicArchPoint, DentitionState } from './types/smartbow';
+import { CameraCalibrationModal } from './components/CameraCalibrationModal';
+import { PatientCase, CrRecord, GothicArchPoint, DentitionState, CameraCalibrationSettings } from './types/smartbow';
 import { computeCrDeviation } from './lib/clinicalMath';
+import { loadCameraCalibration } from './lib/cameraCalibration';
 
 // Initial case baseline - Explicitly classified as SIMULATED demonstration
 const DEFAULT_PATIENT_CASE: PatientCase = {
@@ -86,7 +86,12 @@ const DEFAULT_PATIENT_CASE: PatientCase = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('scanner');
+  const [activeTab, setActiveTab] = useState<MainNavTab>('home');
+  const [recordsSubtab, setRecordsSubtab] = useState<RecordsSubtab>('vdo');
+  const [developerMode, setDeveloperMode] = useState<boolean>(() => {
+    return localStorage.getItem('smartbow_dev_mode') === 'true';
+  });
+
   const [cases, setCases] = useState<PatientCase[]>(() => {
     const saved = localStorage.getItem('smartbow_cases');
     if (saved) {
@@ -113,11 +118,22 @@ export default function App() {
   const [isDatabaseOpen, setIsDatabaseOpen] = useState<boolean>(false);
   const [isNewPatientOpen, setIsNewPatientOpen] = useState<boolean>(false);
   const [isManualOpen, setIsManualOpen] = useState<boolean>(false);
+  const [isCalibrationOpen, setIsCalibrationOpen] = useState<boolean>(false);
+  const [isValidationOpen, setIsValidationOpen] = useState<boolean>(false);
+
+  // Calibration settings
+  const [calibrationSettings, setCalibrationSettings] = useState(loadCameraCalibration);
 
   // Save cases to localStorage on modification
   useEffect(() => {
     localStorage.setItem('smartbow_cases', JSON.stringify(cases));
   }, [cases]);
+
+  // Save dev mode setting
+  const handleToggleDeveloperMode = (enabled: boolean) => {
+    setDeveloperMode(enabled);
+    localStorage.setItem('smartbow_dev_mode', enabled ? 'true' : 'false');
+  };
 
   // Helper to update active case
   const updateActiveCase = (updater: (prev: PatientCase) => PatientCase) => {
@@ -129,7 +145,6 @@ export default function App() {
   // Measurement updates
   const handleUpdateVdo = (newVdo: number) => {
     updateActiveCase(c => {
-      // Proportional lower third update
       const totalFaceH = c.biometrics.facialHeightMm || 190;
       const lowerH = newVdo;
       const lowerThirdPct = Number(((lowerH / totalFaceH) * 100).toFixed(1));
@@ -179,14 +194,13 @@ export default function App() {
     }));
   };
 
-  // Centric relation trial recording - Simulation pathway only in V1
+  // Centric relation trial recording
   const handleAddCrRecord = () => {
     updateActiveCase(c => {
       const idx = c.crRecords.length + 1;
       const currentVdo = c.measurements.vdoMm ?? 62.5;
       const midline = c.measurements.midlineShiftMm ?? 0;
       
-      // Deterministic simulation trial coordinates (NO Math.random jitter!)
       const newRecord: CrRecord = {
         trialIndex: idx,
         timestamp: Date.now(),
@@ -228,7 +242,7 @@ export default function App() {
     }));
   };
 
-  // Gothic arch excursion point
+  // Gothic arch excursion points
   const handleAddGothicPoint = (pt: GothicArchPoint) => {
     updateActiveCase(c => ({
       ...c,
@@ -285,23 +299,36 @@ export default function App() {
     }
   };
 
+  const handleResetCaseData = () => {
+    setCases([DEFAULT_PATIENT_CASE]);
+    setActiveCaseId(DEFAULT_PATIENT_CASE.patientId);
+  };
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-cyan-500/30 selection:text-cyan-200">
-      {/* Top Clinical Navigation Bar */}
-      <TopNav
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col antialiased">
+      {/* Responsive Navigation: Top Bar (Desktop) & Top Header + Bottom Bar (Mobile) */}
+      <Navigation
         activeTab={activeTab}
         onSelectTab={setActiveTab}
-        patientName={activeCase.name}
         patientId={activeCase.patientId}
+        patientName={activeCase.name}
         onOpenReport={() => setIsReportOpen(true)}
-        onOpenMarkers={() => setIsMarkersOpen(true)}
-        onOpenNewPatient={() => setIsNewPatientOpen(true)}
-        onOpenDatabase={() => setIsDatabaseOpen(true)}
-        onOpenManual={() => setIsManualOpen(true)}
       />
 
       {/* Main Clinical Screen Viewport */}
-      <main className="flex-1">
+      <main className="flex-1 pb-16 md:pb-0">
+        {activeTab === 'home' && (
+          <HomeDashboard
+            patientCase={activeCase}
+            onNavigateToTab={setActiveTab}
+            onSelectRecordsSubtab={(sub) => setRecordsSubtab(sub)}
+            onOpenReport={() => setIsReportOpen(true)}
+            onOpenMarkers={() => setIsMarkersOpen(true)}
+            onOpenManual={() => setIsManualOpen(true)}
+            onOpenDatabase={() => setIsDatabaseOpen(true)}
+          />
+        )}
+
         {activeTab === 'scanner' && (
           <LiveScanner
             dentitionState={activeCase.dentitionState}
@@ -316,68 +343,46 @@ export default function App() {
             onUpdateMidline={handleUpdateMidline}
             onRecordCrTrial={handleAddCrRecord}
             onNavigateToTab={setActiveTab}
+            developerMode={developerMode}
           />
         )}
 
-        {activeTab === 'vdo' && (
-          <VdoDashboard
-            vdoMm={activeCase.measurements.vdoMm}
-            onUpdateVdo={handleUpdateVdo}
-            biometrics={activeCase.biometrics}
+        {activeTab === 'records' && (
+          <RecordsView
+            initialSubtab={recordsSubtab}
+            patientCase={activeCase}
             vdrMm={vdrMm}
             onUpdateVdr={setVdrMm}
-            onNavigateToTab={setActiveTab}
-          />
-        )}
-
-        {activeTab === 'cr' && (
-          <CrRecorder
-            records={activeCase.crRecords}
-            onAddRecord={handleAddCrRecord}
-            onClearRecords={handleClearCrRecords}
-            currentMandibularPos={{
-              x: activeCase.measurements.midlineShiftMm ?? 0,
-              y: 0,
-              z: -(activeCase.measurements.vdoMm ?? 62.5)
-            }}
-            vdoMm={activeCase.measurements.vdoMm}
-          />
-        )}
-
-        {activeTab === 'gothic' && (
-          <GothicArchTracer
-            points={activeCase.gothicArchPoints}
-            onAddPoint={handleAddGothicPoint}
-            onClearPoints={handleClearGothicPoints}
-            onSaveParameters={handleSaveGothicParameters}
-            onNavigateToTab={setActiveTab}
-          />
-        )}
-
-        {activeTab === 'facial' && (
-          <FacialAnalysisView
-            biometrics={activeCase.biometrics}
-            vdoMm={activeCase.measurements.vdoMm}
-            crDeviationMm={activeCase.measurements.crDeviationMm}
+            onUpdateVdo={handleUpdateVdo}
+            onRecordCrTrial={handleAddCrRecord}
+            onClearCrRecords={handleClearCrRecords}
+            onAddGothicPoint={handleAddGothicPoint}
+            onClearGothicPoints={handleClearGothicPoints}
+            onSaveGothicParameters={handleSaveGothicParameters}
             onSelectShade={handleSelectShade}
-          />
-        )}
-
-        {activeTab === 'articulator' && (
-          <VirtualArticulator3D
-            patientCase={activeCase}
             onUpdateArticulatorType={(type) => {
               updateActiveCase(c => ({ ...c, articulator: type }));
             }}
+            onNavigateToTab={setActiveTab}
+            onOpenReport={() => setIsReportOpen(true)}
           />
         )}
 
-        {activeTab === 'validation' && (
-          <ValidationSuite />
+        {activeTab === 'settings' && (
+          <SettingsView
+            onOpenCalibration={() => setIsCalibrationOpen(true)}
+            onOpenMarkers={() => setIsMarkersOpen(true)}
+            onOpenValidation={() => setIsValidationOpen(true)}
+            onOpenManual={() => setIsManualOpen(true)}
+            onOpenDatabase={() => setIsDatabaseOpen(true)}
+            developerMode={developerMode}
+            onToggleDeveloperMode={handleToggleDeveloperMode}
+            onResetCaseData={handleResetCaseData}
+          />
         )}
       </main>
 
-      {/* Modals */}
+      {/* Clinical Modals */}
       <PrintableMarkersModal
         isOpen={isMarkersOpen}
         onClose={() => setIsMarkersOpen(false)}
@@ -409,10 +414,44 @@ export default function App() {
         isOpen={isManualOpen}
         onClose={() => setIsManualOpen(false)}
         onNavigateToTab={(tab) => {
-          setActiveTab(tab);
+          if (['vdo', 'cr', 'gothic', 'facial', 'articulator'].includes(tab)) {
+            setRecordsSubtab(tab as RecordsSubtab);
+            setActiveTab('records');
+          } else if (tab === 'scanner') {
+            setActiveTab('scanner');
+          } else if (tab === 'validation') {
+            setIsValidationOpen(true);
+          }
           setIsManualOpen(false);
         }}
       />
+
+      <CameraCalibrationModal
+        isOpen={isCalibrationOpen}
+        onClose={() => setIsCalibrationOpen(false)}
+        currentSettings={calibrationSettings}
+        currentMeasuredDistanceCm={48}
+        onSaveSettings={(settings: CameraCalibrationSettings) => setCalibrationSettings(settings)}
+      />
+
+      {isValidationOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">Academic Defense &amp; Clinical Validation Suite</h3>
+              <button
+                onClick={() => setIsValidationOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <ValidationSuite />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

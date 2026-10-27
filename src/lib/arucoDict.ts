@@ -199,21 +199,25 @@ export function getFullMarkerGrid(id: number): number[][] {
 
 /**
  * Render marker to SVG string for crisp printing & display.
+ * If standalone=false, width and height use user coordinates (matching parent viewBox 1:1 in mm)
+ * to avoid browser/canvas CSS mm evaluation expanding markers by 3.78x and causing overlaps.
  */
-export function renderMarkerSvg(id: number, sizeMm: number = 14): string {
+export function renderMarkerSvg(id: number, sizeMm: number = 14, standalone: boolean = true): string {
   const grid = getFullMarkerGrid(id);
   const cellSize = sizeMm / 6;
 
   let rects = '';
   for (let r = 0; r < 6; r++) {
     for (let c = 0; c < 6; c++) {
-      const isWhite = grid[r][c] === 1;
-      const fill = isWhite ? '#FFFFFF' : '#000000';
-      rects += `<rect x="${(c * cellSize).toFixed(2)}" y="${(r * cellSize).toFixed(2)}" width="${cellSize.toFixed(2)}" height="${cellSize.toFixed(2)}" fill="${fill}" />\n`;
+      if (grid[r][c] === 1) {
+        rects += `<rect x="${(c * cellSize).toFixed(3)}" y="${(r * cellSize).toFixed(3)}" width="${cellSize.toFixed(3)}" height="${cellSize.toFixed(3)}" fill="#FFFFFF" />\n`;
+      }
     }
   }
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${sizeMm} ${sizeMm}" width="${sizeMm}mm" height="${sizeMm}mm">
+  const unit = standalone ? 'mm' : '';
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${sizeMm} ${sizeMm}" width="${sizeMm}${unit}" height="${sizeMm}${unit}">
     <rect width="${sizeMm}" height="${sizeMm}" fill="#000000" />
     ${rects}
   </svg>`;
@@ -222,15 +226,16 @@ export function renderMarkerSvg(id: number, sizeMm: number = 14): string {
 /**
  * Render complete 18x18mm acrylic marker board layout:
  * - 18x18mm acrylic boundary
- * - 4 markers in 14x14mm square corner array
- * - Crosshair alignment & label
+ * - 4 markers in 14x14mm square corner array (pitch 7.5 mm, marker 6.5 mm)
+ * - Central alignment reticle
+ * If standalone=false, width/height are unitless numbers matching parent viewBox.
  */
-export function renderBoardSvg(ids: [number, number, number, number], boardName: string): string {
+export function renderBoardSvg(ids: [number, number, number, number], boardName: string = '', standalone: boolean = true): string {
   const boardSizeMm = 18;
   const markerSizeMm = 6.5;
-  const marginMm = (boardSizeMm - 14) / 2; // 2mm margin
+  const marginMm = (boardSizeMm - 14) / 2; // 2.0 mm margin
 
-  // 4 corner positions in 14x14mm array
+  // 4 corner positions in 14x14mm array (pitch = 7.5 mm, gap = 1.0 mm)
   const positions = [
     { x: marginMm, y: marginMm, id: ids[0] },
     { x: marginMm + 14 - markerSizeMm, y: marginMm, id: ids[1] },
@@ -246,32 +251,30 @@ export function renderBoardSvg(ids: [number, number, number, number], boardName:
     for (let r = 0; r < 6; r++) {
       for (let c = 0; c < 6; c++) {
         if (grid[r][c] === 1) {
-          cells += `<rect x="${(p.x + c * cell).toFixed(2)}" y="${(p.y + r * cell).toFixed(2)}" width="${cell.toFixed(2)}" height="${cell.toFixed(2)}" fill="#FFFFFF" />`;
+          cells += `<rect x="${(p.x + c * cell).toFixed(3)}" y="${(p.y + r * cell).toFixed(3)}" width="${cell.toFixed(3)}" height="${cell.toFixed(3)}" fill="#FFFFFF" />`;
         }
       }
     }
+    // Clean marker: 1-bit outer black border with inner data cells. Zero text over quiet zone or marker.
     markersSvg += `
-      <rect x="${p.x.toFixed(2)}" y="${p.y.toFixed(2)}" width="${markerSizeMm}" height="${markerSizeMm}" fill="#000000" />
+      <rect x="${p.x.toFixed(3)}" y="${p.y.toFixed(3)}" width="${markerSizeMm.toFixed(3)}" height="${markerSizeMm.toFixed(3)}" fill="#000000" />
       ${cells}
-      <text x="${(p.x + markerSizeMm / 2).toFixed(2)}" y="${(p.y + markerSizeMm + 1.2).toFixed(2)}" font-size="1" fill="#000" text-anchor="middle" font-family="monospace">#${p.id}</text>
     `;
   }
 
+  const unit = standalone ? 'mm' : '';
+
   return `
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${boardSizeMm} ${boardSizeMm}" width="${boardSizeMm}mm" height="${boardSizeMm}mm">
-    <!-- Acrylic Outline -->
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${boardSizeMm} ${boardSizeMm}" width="${boardSizeMm}${unit}" height="${boardSizeMm}${unit}">
+    <!-- Acrylic Cut Outline (18.0 x 18.0 mm) -->
     <rect x="0.2" y="0.2" width="${boardSizeMm - 0.4}" height="${boardSizeMm - 0.4}" rx="1" fill="#FFFFFF" stroke="#0284C7" stroke-width="0.3" stroke-dasharray="0.8,0.4" />
     
-    <!-- Center Alignment Crosshair -->
-    <line x1="${boardSizeMm / 2}" y1="1" x2="${boardSizeMm / 2}" y2="${boardSizeMm - 1}" stroke="#CBD5E1" stroke-width="0.2" />
-    <line x1="1" y1="${boardSizeMm / 2}" x2="${boardSizeMm - 1}" y2="${boardSizeMm / 2}" stroke="#CBD5E1" stroke-width="0.2" />
-    <circle cx="${boardSizeMm / 2}" cy="${boardSizeMm / 2}" r="1" fill="none" stroke="#CBD5E1" stroke-width="0.2" />
+    <!-- Central Alignment Reticle (located in the 1.0 mm channel between markers, does not overlap fiducials) -->
+    <line x1="${boardSizeMm / 2}" y1="8.5" x2="${boardSizeMm / 2}" y2="9.5" stroke="#0284C7" stroke-width="0.2" />
+    <line x1="8.5" y1="${boardSizeMm / 2}" x2="9.5" y2="${boardSizeMm / 2}" stroke="#0284C7" stroke-width="0.2" />
+    <circle cx="${boardSizeMm / 2}" cy="${boardSizeMm / 2}" r="0.2" fill="#0284C7" />
     
-    <!-- Title Label -->
-    <text x="${boardSizeMm / 2}" y="${boardSizeMm / 2 + 0.35}" font-size="1.2" font-weight="bold" fill="#0369A1" text-anchor="middle" font-family="sans-serif">${boardName}</text>
-    <text x="${boardSizeMm / 2}" y="${boardSizeMm / 2 + 1.8}" font-size="0.8" fill="#64748B" text-anchor="middle" font-family="sans-serif">18×18mm</text>
-    
-    <!-- Markers -->
+    <!-- 4 ArUco Markers -->
     ${markersSvg}
   </svg>
   `;
@@ -372,182 +375,274 @@ export function decodeMarkerGrid(grid: number[][]): { id: number; rotationDeg: n
 
 /**
  * Render Complete A4 Sheet SVG (210 x 297 mm) at 100% Scale
- * Includes:
- * - 100mm Certified Calibration Scale Bar
- * - Maxillary & Mandibular 18x18mm Arrays
- * - Facial Reference Markers (F01-F03)
- * - Articulator Reference Markers (H01-H02)
- * - 3x3 Calibration Grid Card (CAL01-CAL09)
- * - Printable cutting guides & quiet zones
+ * Optimized layout with zero element collisions and clean ArUco quiet zones:
+ * - 100.0 mm Vernier Caliper Scale Verification Bar (±0.2 mm tolerance)
+ * - Section 1: Occlusal Rim Target Arrays (18.0 × 18.0 mm) with CAD Datums
+ * - Section 2: Facial (F01–F03) & Hanau Articulator (H01–H02) Markers (14.0 × 14.0 mm)
+ * - Section 3: Camera Intrinsics 3×3 Calibration Card (60.0 × 60.0 mm) with RMS protocol
+ * - Clinically verified references (Boucher 12th ed. & Winkler 2nd ed.)
  */
 export function renderFullA4PrintSheetSvg(): string {
-  const maxillaSvg = renderBoardSvg([3, 4, 5, 6], 'MAXILLA');
-  const mandSvg = renderBoardSvg([7, 8, 9, 10], 'MANDIBLE');
+  const maxillaSvg = renderBoardSvg([3, 4, 5, 6], 'MAXILLA', false);
+  const mandSvg = renderBoardSvg([7, 8, 9, 10], 'MANDIBLE', false);
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297" width="210mm" height="297mm" style="background:#FFFFFF;">
   <style>
-    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace, sans-serif; }
-    .dim-line { stroke: #0284C7; stroke-width: 0.25; stroke-dasharray: 0.8, 0.4; }
-    .tick { stroke: #000000; stroke-width: 0.35; }
-    .major-tick { stroke: #000000; stroke-width: 0.5; }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .mono { font-family: "SF Mono", Monaco, Menlo, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .tick { stroke: #0F172A; stroke-width: 0.3; }
+    .mid-tick { stroke: #0F172A; stroke-width: 0.4; }
+    .major-tick { stroke: #0F172A; stroke-width: 0.6; }
+    .cut-line { stroke: #0284C7; stroke-width: 0.3; stroke-dasharray: 1, 0.6; fill: none; }
   </style>
 
-  <!-- Document Boundary / 10mm Margin Guide -->
+  <!-- Document Margin Guide (10 mm margins: 190 x 277 mm printable area) -->
   <rect x="10" y="10" width="190" height="277" fill="none" stroke="#E2E8F0" stroke-width="0.3" stroke-dasharray="2, 2" />
 
   <!-- Sheet Header -->
-  <text x="105" y="20" font-size="3.8" font-weight="bold" fill="#0F172A" text-anchor="middle">SMARTBOW AI — 1:1 CALIBRATED ARUCO FIDUCIAL PRINT SHEET</text>
-  <text x="105" y="25" font-size="2.4" font-weight="600" fill="#0369A1" text-anchor="middle">OPENCV DICT_4X4_50 SPECIFICATION · PRECISION RESEARCH PRINT SPEC</text>
-  <text x="105" y="29.5" font-size="2.0" fill="#DC2626" font-weight="bold" text-anchor="middle">MANDATORY: PRINT AT 100% SCALE (ACTUAL SIZE) · DO NOT FIT TO PAGE</text>
-
-  <!-- Physical 100mm Vernier Caliper Scale Verification Bar -->
-  <g transform="translate(55, 36)">
-    <rect x="0" y="0" width="100" height="14" fill="#F8FAFC" stroke="#0F172A" stroke-width="0.5" />
-    <!-- 100mm Scale Rule Ticks -->
-    ${Array.from({ length: 101 }, (_, i) => {
-      const isMajor = i % 10 === 0;
-      const isMid = i % 5 === 0 && !isMajor;
-      const h = isMajor ? 8 : isMid ? 5 : 3;
-      return `<line x1="${i}" y1="0" x2="${i}" y2="${h}" class="${isMajor ? 'major-tick' : 'tick'}" />
-      ${isMajor ? `<text x="${i}" y="12" font-size="2.2" font-weight="bold" text-anchor="middle">${i}</text>` : ''}`;
-    }).join('\n')}
-    <text x="50" y="-2" font-size="2.0" font-weight="bold" fill="#0F172A" text-anchor="middle">PHYSICAL 100.0 mm SCALE BAR — VERIFY WITH VERNIER CALIPER BEFORE CUTTING</text>
-    <text x="50" y="17.5" font-size="1.8" fill="#475569" text-anchor="middle">PASS: Reads 100.0 ± 0.5 mm | FAIL: Scale distorted by printer driver margins</text>
+  <g transform="translate(105, 16)">
+    <text x="0" y="0" font-size="3.5" font-weight="800" fill="#0F172A" text-anchor="middle" letter-spacing="0.2">SMARTBOW AI — 1:1 CALIBRATED ARUCO FIDUCIAL PRINT SHEET</text>
+    <text x="0" y="4.2" font-size="2.1" font-weight="600" fill="#0284C7" text-anchor="middle">OPENCV DICT_4X4_50 SPECIFICATION · PRECISION PROSTHODONTIC RESEARCH SPEC</text>
+    <text x="0" y="8.2" font-size="2.0" font-weight="800" fill="#DC2626" text-anchor="middle">MANDATORY: PRINT AT 100% SCALE (ACTUAL SIZE) · DO NOT FIT TO PAGE</text>
   </g>
 
-  <!-- Section 1: Occlusal Rim Acrylic Target Arrays (18x18mm) -->
-  <g transform="translate(18, 62)">
-    <rect x="0" y="0" width="174" height="42" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="0.4" rx="2" />
-    <text x="6" y="7" font-size="2.8" font-weight="bold" fill="#0F172A">1. OCCLUSAL RIM BUCCAL TARGET ARRAYS (18.0 × 18.0 × 3.0 mm)</text>
-    <text x="6" y="11.5" font-size="1.8" fill="#64748B">Affix onto right buccal premolar surface with sticky wax &amp; 0.8mm wire tag. Clearance: ≥5mm from occlusal table.</text>
+  <!-- Section 0: Dual-Axis Physical Caliper Scale Verification (Horizontal 100.0 mm × Vertical 50.0 mm) -->
+  <g transform="translate(16, 26)">
+    <rect x="0" y="0" width="178" height="54" fill="#F8FAFC" stroke="#0F172A" stroke-width="0.4" rx="2" />
+    
+    <text x="6" y="5.0" font-size="2.2" font-weight="800" fill="#0F172A">DUAL-AXIS PHYSICAL SCALE VERIFICATION (HORIZONTAL 100.0 mm × VERTICAL 50.0 mm)</text>
+    <text x="6" y="8.5" font-size="1.35" fill="#64748B">Verify both axes with calibrated Vernier caliper before cutting fiducials. Detects printer roller feed distortion.</text>
 
-    <!-- Maxillary Board -->
-    <g transform="translate(16, 16)">
-      ${maxillaSvg}
-      <text x="9" y="21.5" font-size="1.6" fill="#0369A1" font-weight="bold" text-anchor="middle">MAXILLARY RIM</text>
-      <text x="9" y="23.5" font-size="1.3" fill="#64748B" text-anchor="middle">IDs: 3, 4, 5, 6</text>
+    <!-- 1. Horizontal 100.0 mm Scale Bar -->
+    <g transform="translate(6, 14)">
+      <rect x="0" y="0" width="100" height="12" fill="#FFFFFF" stroke="#0F172A" stroke-width="0.4" />
+      ${Array.from({ length: 101 }, (_, i) => {
+        const isMajor = i % 10 === 0;
+        const isMid = i % 5 === 0 && !isMajor;
+        const h = isMajor ? 6.5 : isMid ? 4.2 : 2.5;
+        const cls = isMajor ? 'major-tick' : isMid ? 'mid-tick' : 'tick';
+        return `<line x1="${i}" y1="0" x2="${i}" y2="${h}" class="${cls}" />
+        ${isMajor ? `<text x="${i}" y="10.2" font-size="1.9" font-weight="bold" fill="#0F172A" text-anchor="middle" class="mono">${i}</text>` : ''}`;
+      }).join('\n')}
+      <path d="M 0,-1 L 1,-2.4 L -1,-2.4 Z" fill="#DC2626" />
+      <path d="M 100,-1 L 101,-2.4 L 99,-2.4 Z" fill="#DC2626" />
+      <text x="50" y="-2.5" font-size="1.6" font-weight="700" fill="#0F172A" text-anchor="middle">PHYSICAL 100.0 mm SCALE BAR (HORIZONTAL X-AXIS)</text>
+      <text x="50" y="14.8" font-size="1.3" fill="#475569" text-anchor="middle">PASS TOLERANCE: 100.0 ± 0.2 mm · If reading differs, disable printer driver auto-scaling</text>
     </g>
 
-    <!-- Mandibular Board -->
-    <g transform="translate(48, 16)">
-      ${mandSvg}
-      <text x="9" y="21.5" font-size="1.6" fill="#047857" font-weight="bold" text-anchor="middle">MANDIBULAR RIM</text>
-      <text x="9" y="23.5" font-size="1.3" fill="#64748B" text-anchor="middle">IDs: 7, 8, 9, 10</text>
+    <!-- 2. 20.0 x 20.0 mm Square Verification Gauge -->
+    <g transform="translate(6, 31)">
+      <rect x="0" y="0" width="20" height="20" fill="#FFFFFF" stroke="#0F172A" stroke-width="0.4" />
+      <line x1="0" y1="10" x2="20" y2="10" stroke="#0284C7" stroke-width="0.3" stroke-dasharray="1, 1" />
+      <line x1="10" y1="0" x2="10" y2="20" stroke="#0284C7" stroke-width="0.3" stroke-dasharray="1, 1" />
+      <circle cx="10" cy="10" r="0.6" fill="#0284C7" />
+      <text x="24" y="6.0" font-size="1.4" font-weight="bold" fill="#0F172A">20.0 × 20.0 mm SQUARE GAUGE</text>
+      <text x="24" y="10.5" font-size="1.25" font-weight="600" fill="#047857">PASS: 20.0 ± 0.1 mm (Both Axes)</text>
+      <text x="24" y="15.0" font-size="1.15" fill="#64748B">Verify squareness (diagonal: 28.28 mm)</text>
+      <text x="24" y="19.0" font-size="1.15" fill="#DC2626" font-weight="bold">• MUST PRINT AT ACTUAL SIZE / 100%</text>
     </g>
 
-    <!-- Spare Maxillary Board -->
-    <g transform="translate(80, 16)">
-      ${maxillaSvg}
-      <text x="9" y="21.5" font-size="1.6" fill="#0369A1" text-anchor="middle">SPARE MAXILLA</text>
-    </g>
-
-    <!-- Spare Mandibular Board -->
-    <g transform="translate(112, 16)">
-      ${mandSvg}
-      <text x="9" y="21.5" font-size="1.6" fill="#047857" text-anchor="middle">SPARE MANDIBLE</text>
-    </g>
-
-    <!-- CAD Specifications Callout -->
-    <g transform="translate(136, 16)">
-      <rect x="0" y="0" width="32" height="22" fill="#FFFFFF" stroke="#0284C7" stroke-width="0.3" rx="1" />
-      <text x="16" y="3.5" font-size="1.6" font-weight="bold" fill="#0284C7" text-anchor="middle">PLATE CAD DATUMS</text>
-      <text x="3" y="7.5" font-size="1.3" fill="#334155">• Plate: 18.0 × 18.0 mm</text>
-      <text x="3" y="11.0" font-size="1.3" fill="#334155">• Marker: 6.5 × 6.5 mm</text>
-      <text x="3" y="14.5" font-size="1.3" fill="#334155">• Pitch: 7.50 mm C-to-C</text>
-      <text x="3" y="18.0" font-size="1.3" fill="#334155">• Span: 14.0 × 14.0 mm</text>
+    <!-- 3. Vertical 50.0 mm Scale Bar -->
+    <g transform="translate(116, 2)">
+      <rect x="0" y="0" width="8" height="50" fill="#FFFFFF" stroke="#0F172A" stroke-width="0.4" />
+      ${Array.from({ length: 51 }, (_, i) => {
+        const isMajor = i % 10 === 0;
+        const isMid = i % 5 === 0 && !isMajor;
+        const w = isMajor ? 5.5 : isMid ? 3.6 : 2.0;
+        const cls = isMajor ? 'major-tick' : isMid ? 'mid-tick' : 'tick';
+        return `<line x1="0" y1="${i}" x2="${w}" y2="${i}" class="${cls}" />
+        ${isMajor ? `<text x="10" y="${i + 0.8}" font-size="1.7" font-weight="bold" fill="#0F172A" text-anchor="start" class="mono">${i}</text>` : ''}`;
+      }).join('\n')}
+      <path d="M -1,0 L -2.4,1 L -2.4,-1 Z" fill="#DC2626" />
+      <path d="M -1,50 L -2.4,51 L -2.4,49 Z" fill="#DC2626" />
+      
+      <g transform="translate(20, 8)">
+        <text x="0" y="4" font-size="1.4" font-weight="bold" fill="#0F172A">VERTICAL 50.0 mm SCALE BAR</text>
+        <text x="0" y="9.5" font-size="1.25" font-weight="600" fill="#047857">PASS TOLERANCE: 50.0 ± 0.2 mm</text>
+        <text x="0" y="15.0" font-size="1.1" fill="#475569">Checks roller feed slippage (Y-axis)</text>
+        <text x="0" y="20.5" font-size="1.1" fill="#475569">If Y != X, printer roller is dragging</text>
+        <rect x="0" y="24" width="38" height="12" fill="#FEF2F2" stroke="#FCA5A5" stroke-width="0.3" rx="1" />
+        <text x="19" y="29.0" font-size="1.05" font-weight="bold" fill="#DC2626" text-anchor="middle">DISABLE FIT TO PAGE</text>
+        <text x="19" y="33.5" font-size="1.0" font-weight="bold" fill="#B91C1C" text-anchor="middle">SCALE = 100% ONLY</text>
+      </g>
     </g>
   </g>
 
-  <!-- Section 2: Facial Reference Markers (F01, F02, F03 — 14.0 x 14.0 mm) -->
-  <g transform="translate(18, 110)">
-    <rect x="0" y="0" width="174" height="42" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="0.4" rx="2" />
-    <text x="6" y="7" font-size="2.8" font-weight="bold" fill="#0F172A">2. FACIAL REFERENCE MARKERS (14.0 × 14.0 mm ON ADHESIVE BACKING)</text>
-    <text x="6" y="11.5" font-size="1.8" fill="#64748B">Establish patient cranial coordinate frame. Affix to skin with hypoallergenic adhesive dots.</text>
+  <!-- Section 1: Occlusal Rim Buccal Target Arrays (18.0 × 18.0 × 3.0 mm) -->
+  <g transform="translate(16, 83)">
+    <rect x="0" y="0" width="178" height="46" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="0.4" rx="2" />
+    <text x="6" y="6.5" font-size="2.6" font-weight="800" fill="#0F172A">1. OCCLUSAL RIM BUCCAL TARGET ARRAYS (18.0 × 18.0 × 3.0 mm)</text>
+    <text x="6" y="10.2" font-size="1.6" fill="#64748B">Affix onto right buccal premolar surface with sticky wax &amp; 0.8mm SS tag wire. Clearance: ≥5.0mm from occlusal table.</text>
 
-    <!-- F01 Forehead -->
-    <g transform="translate(16, 16)">
-      ${renderMarkerSvg(0, 14)}
-      <text x="7" y="17.5" font-size="1.6" font-weight="bold" fill="#0F172A" text-anchor="middle">F01 · GLABELLA</text>
-      <text x="7" y="19.8" font-size="1.3" fill="#64748B" text-anchor="middle">ID: 0 (Forehead Midline)</text>
+    <!-- Maxillary Board Primary -->
+    <g transform="translate(8, 12)">
+      ${maxillaSvg}
+      <text x="9" y="21.5" font-size="1.5" font-weight="bold" fill="#0369A1" text-anchor="middle">MAXILLARY #1</text>
+      <text x="9" y="24.2" font-size="1.2" fill="#64748B" text-anchor="middle" class="mono">IDs: 3, 4, 5, 6</text>
     </g>
 
-    <!-- F02 Right Zygoma -->
-    <g transform="translate(46, 16)">
-      ${renderMarkerSvg(1, 14)}
-      <text x="7" y="17.5" font-size="1.6" font-weight="bold" fill="#0F172A" text-anchor="middle">F02 · RIGHT ZYGOMA</text>
-      <text x="7" y="19.8" font-size="1.3" fill="#64748B" text-anchor="middle">ID: 1 (Cheekbone Prominence)</text>
+    <!-- Mandibular Board Primary -->
+    <g transform="translate(32, 12)">
+      ${mandSvg}
+      <text x="9" y="21.5" font-size="1.5" font-weight="bold" fill="#047857" text-anchor="middle">MANDIBULAR #1</text>
+      <text x="9" y="24.2" font-size="1.2" fill="#64748B" text-anchor="middle" class="mono">IDs: 7, 8, 9, 10</text>
     </g>
 
-    <!-- F03 Left Zygoma -->
-    <g transform="translate(76, 16)">
-      ${renderMarkerSvg(2, 14)}
-      <text x="7" y="17.5" font-size="1.6" font-weight="bold" fill="#0F172A" text-anchor="middle">F03 · LEFT ZYGOMA</text>
-      <text x="7" y="19.8" font-size="1.3" fill="#64748B" text-anchor="middle">ID: 2 (Cheekbone Prominence)</text>
+    <!-- Maxillary Board Spare -->
+    <g transform="translate(56, 12)">
+      ${maxillaSvg}
+      <text x="9" y="21.5" font-size="1.5" font-weight="bold" fill="#0369A1" text-anchor="middle">MAXILLA (SPARE)</text>
+      <text x="9" y="24.2" font-size="1.2" fill="#64748B" text-anchor="middle" class="mono">IDs: 3, 4, 5, 6</text>
     </g>
 
-    <!-- Section 3: Hanau Articulator Adapter Markers (H01, H02 — 14.0 x 14.0 mm) -->
-    <!-- H01 Upper Member -->
-    <g transform="translate(112, 16)">
-      ${renderMarkerSvg(11, 14)}
-      <text x="7" y="17.5" font-size="1.6" font-weight="bold" fill="#6D28D9" text-anchor="middle">H01 · HANAU UPPER</text>
-      <text x="7" y="19.8" font-size="1.3" fill="#64748B" text-anchor="middle">ID: 11 (Upper Condylar Axis)</text>
+    <!-- Mandibular Board Spare -->
+    <g transform="translate(80, 12)">
+      ${mandSvg}
+      <text x="9" y="21.5" font-size="1.5" font-weight="bold" fill="#047857" text-anchor="middle">MANDIBLE (SPARE)</text>
+      <text x="9" y="24.2" font-size="1.2" fill="#64748B" text-anchor="middle" class="mono">IDs: 7, 8, 9, 10</text>
     </g>
 
-    <!-- H02 Lower Member -->
-    <g transform="translate(142, 16)">
-      ${renderMarkerSvg(12, 14)}
-      <text x="7" y="17.5" font-size="1.6" font-weight="bold" fill="#6D28D9" text-anchor="middle">H02 · HANAU LOWER</text>
-      <text x="7" y="19.8" font-size="1.3" fill="#64748B" text-anchor="middle">ID: 12 (Lower Base Member)</text>
+    <!-- CAD Specifications Callout Box -->
+    <g transform="translate(104, 11)">
+      <rect x="0" y="0" width="68" height="32" fill="#FFFFFF" stroke="#0284C7" stroke-width="0.3" rx="1.5" />
+      <text x="34" y="4.5" font-size="1.5" font-weight="bold" fill="#0284C7" text-anchor="middle">PLATE CAD DATUMS &amp; CLEARANCES</text>
+      <line x1="4" y1="6.5" x2="64" y2="6.5" stroke="#E2E8F0" stroke-width="0.25" />
+      <text x="4" y="10.2" font-size="1.2" fill="#334155">• Plate Size: 18.0 × 18.0 × 3.0 mm (PMMA)</text>
+      <text x="4" y="14.0" font-size="1.2" fill="#334155">• Marker Size: 6.50 × 6.50 mm (4 fiducials)</text>
+      <text x="4" y="17.8" font-size="1.2" fill="#334155">• Pitch: 7.50 mm C-to-C (Span: 14.0 × 14.0 mm)</text>
+      <text x="4" y="21.6" font-size="1.2" fill="#334155">• Quiet Zone Margin: 2.0 mm (≥1.5 mm req)</text>
+      <text x="4" y="25.4" font-size="1.2" fill="#334155">• Reticle Gap: 1.0 mm (central crosshair)</text>
+      <text x="4" y="29.2" font-size="1.2" fill="#047857" font-weight="600">• Occlusal Clearance: ≥5.0 mm | Plate Gap: ≥2.0 mm</text>
+    </g>
+  </g>
+
+  <!-- Section 2: Facial Reference & Hanau Articulator Reference Markers (14.0 × 14.0 mm) -->
+  <g transform="translate(16, 132)">
+    <rect x="0" y="0" width="178" height="44" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="0.4" rx="2" />
+    <text x="6" y="6.5" font-size="2.6" font-weight="800" fill="#0F172A">2. FACIAL &amp; HANAU ARTICULATOR REFERENCE MARKERS (14.0 × 14.0 mm)</text>
+    <text x="6" y="10.2" font-size="1.6" fill="#64748B">Establish cranial reference plane (F01–F03) &amp; mechanical articulator condylar axis registration (H01–H02).</text>
+
+    <!-- Sub-card A: Facial Frame Markers -->
+    <g transform="translate(6, 12)">
+      <rect x="0" y="0" width="104" height="29" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="0.3" rx="1.5" />
+      <text x="52" y="4.5" font-size="1.4" font-weight="bold" fill="#0369A1" text-anchor="middle">PATIENT CRANIAL REFERENCE FRAME (SKIN ADHESIVE)</text>
+
+      <!-- F01 Forehead -->
+      <g transform="translate(8, 6.0)">
+        <rect x="-1" y="-1" width="16" height="16" class="cut-line" rx="0.5" />
+        ${renderMarkerSvg(0, 14, false)}
+        <text x="7" y="17.5" font-size="1.3" font-weight="bold" fill="#0F172A" text-anchor="middle">F01 · GLABELLA</text>
+        <text x="7" y="19.8" font-size="1.05" fill="#64748B" text-anchor="middle" class="mono">ID: 0 (Forehead)</text>
+      </g>
+
+      <!-- F02 Right Zygoma -->
+      <g transform="translate(42, 6.0)">
+        <rect x="-1" y="-1" width="16" height="16" class="cut-line" rx="0.5" />
+        ${renderMarkerSvg(1, 14, false)}
+        <text x="7" y="17.5" font-size="1.3" font-weight="bold" fill="#0F172A" text-anchor="middle">F02 · R ZYGOMA</text>
+        <text x="7" y="19.8" font-size="1.05" fill="#64748B" text-anchor="middle" class="mono">ID: 1 (R Cheek)</text>
+      </g>
+
+      <!-- F03 Left Zygoma -->
+      <g transform="translate(76, 6.0)">
+        <rect x="-1" y="-1" width="16" height="16" class="cut-line" rx="0.5" />
+        ${renderMarkerSvg(2, 14, false)}
+        <text x="7" y="17.5" font-size="1.3" font-weight="bold" fill="#0F172A" text-anchor="middle">F03 · L ZYGOMA</text>
+        <text x="7" y="19.8" font-size="1.05" fill="#64748B" text-anchor="middle" class="mono">ID: 2 (L Cheek)</text>
+      </g>
+    </g>
+
+    <!-- Sub-card B: Hanau Articulator Reference Markers -->
+    <g transform="translate(114, 12)">
+      <rect x="0" y="0" width="58" height="29" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="0.3" rx="1.5" />
+      <text x="29" y="4.5" font-size="1.4" font-weight="bold" fill="#6D28D9" text-anchor="middle">HANAU ARTICULATOR</text>
+
+      <!-- H01 Upper Member -->
+      <g transform="translate(8, 6.0)">
+        <rect x="-1" y="-1" width="16" height="16" class="cut-line" rx="0.5" />
+        ${renderMarkerSvg(11, 14, false)}
+        <text x="7" y="17.5" font-size="1.3" font-weight="bold" fill="#6D28D9" text-anchor="middle">H01 · UPPER</text>
+        <text x="7" y="19.8" font-size="1.05" fill="#64748B" text-anchor="middle" class="mono">ID: 11 (Axis)</text>
+      </g>
+
+      <!-- H02 Lower Member -->
+      <g transform="translate(34, 6.0)">
+        <rect x="-1" y="-1" width="16" height="16" class="cut-line" rx="0.5" />
+        ${renderMarkerSvg(12, 14, false)}
+        <text x="7" y="17.5" font-size="1.3" font-weight="bold" fill="#6D28D9" text-anchor="middle">H02 · LOWER</text>
+        <text x="7" y="19.8" font-size="1.05" fill="#64748B" text-anchor="middle" class="mono">ID: 12 (Base)</text>
+      </g>
     </g>
   </g>
 
   <!-- Section 3: Camera Calibration 3x3 Card (60.0 x 60.0 mm) -->
-  <g transform="translate(18, 158)">
-    <rect x="0" y="0" width="174" height="88" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="0.4" rx="2" />
-    <text x="6" y="7" font-size="2.8" font-weight="bold" fill="#0F172A">3. CAMERA INTRINSICS CALIBRATION TARGET (60.0 × 60.0 mm RIGID CARD)</text>
-    <text x="6" y="11.5" font-size="1.8" fill="#64748B">3×3 ArUco array for calculating pinhole focal length (fx, fy) and optical principal center (cx, cy). Mount flat on acrylic.</text>
+  <g transform="translate(16, 180)">
+    <rect x="0" y="0" width="178" height="88" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="0.4" rx="2" />
+    <text x="6" y="6.5" font-size="2.6" font-weight="800" fill="#0F172A">3. CAMERA INTRINSICS CALIBRATION TARGET (60.0 × 60.0 mm RIGID CARD)</text>
+    <text x="6" y="10.2" font-size="1.6" fill="#64748B">3×3 ArUco array for pinhole focal length (fx, fy), optical center (cx, cy), &amp; Brown-Conrady lens distortion (k1, k2).</text>
 
-    <!-- 3x3 Calibration Grid Card -->
-    <g transform="translate(16, 16)">
-      <rect x="0" y="0" width="60" height="60" fill="#FFFFFF" stroke="#0F172A" stroke-width="0.4" />
-      <text x="30" y="58" font-size="1.5" font-weight="bold" fill="#64748B" text-anchor="middle">CALIBRATION CARD · 60×60mm · PITCH 18mm</text>
+    <!-- 3x3 Calibration Grid Card (60 x 60 mm) -->
+    <g transform="translate(10, 13)">
+      <!-- Outer Cut Guide (64 x 64 mm) -->
+      <rect x="-2" y="-2" width="64" height="64" class="cut-line" rx="1" />
       
-      <!-- 9 Markers: IDs 20 to 28 -->
+      <!-- Card Plate (60 x 60 mm) -->
+      <rect x="0" y="0" width="60" height="60" fill="#FFFFFF" stroke="#0F172A" stroke-width="0.4" />
+      
+      <!-- 9 Unoccluded ArUco Markers: IDs 20 to 28 (12.0 x 12.0 mm, Pitch: 18.0 mm) -->
       ${[
         { id: 20, x: 6, y: 6 },  { id: 21, x: 24, y: 6 },  { id: 22, x: 42, y: 6 },
         { id: 23, x: 6, y: 24 }, { id: 24, x: 24, y: 24 }, { id: 25, x: 42, y: 24 },
         { id: 26, x: 6, y: 42 }, { id: 27, x: 24, y: 42 }, { id: 28, x: 42, y: 42 }
       ].map(m => `
         <g transform="translate(${m.x}, ${m.y})">
-          ${renderMarkerSvg(m.id, 12)}
-          <text x="6" y="11.2" font-size="1.0" fill="#FFFFFF" font-family="monospace" text-anchor="middle">#${m.id}</text>
+          ${renderMarkerSvg(m.id, 12, false)}
         </g>
       `).join('\n')}
+
+      <!-- Outside Card Label -->
+      <text x="30" y="67.0" font-size="1.3" font-weight="bold" fill="#0F172A" text-anchor="middle">CALIBRATION CARD · 60.0 × 60.0 mm · PITCH 18.0 mm</text>
+      <text x="30" y="70.0" font-size="1.1" fill="#64748B" text-anchor="middle" class="mono">IDs 20–28 · Clean DICT_4X4_50 · Mount on rigid substrate</text>
     </g>
 
-    <!-- Calibration Instructions & Pass/Fail Criteria -->
-    <g transform="translate(84, 18)">
-      <rect x="0" y="0" width="84" height="56" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="0.3" rx="1.5" />
-      <text x="5" y="6" font-size="2.2" font-weight="bold" fill="#0F172A">CALIBRATION PROTOCOL &amp; TOLERANCES</text>
-      <text x="5" y="12" font-size="1.6" fill="#334155">1. Paste 60×60mm card onto rigid flat cardboard or acrylic.</text>
-      <text x="5" y="17" font-size="1.6" fill="#334155">2. Hold card at 45–50 cm distance under uniform diffuse lighting.</text>
-      <text x="5" y="22" font-size="1.6" fill="#334155">3. Software requires all 9 markers detected across 10 poses.</text>
-      <text x="5" y="27" font-size="1.6" fill="#334155">4. Reprojection error must satisfy &lt; 0.50 px root-mean-square.</text>
+    <!-- Calibration Protocol & Pass/Fail Criteria -->
+    <g transform="translate(80, 13)">
+      <rect x="0" y="0" width="92" height="71" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="0.3" rx="1.5" />
+      <text x="6" y="5.0" font-size="1.5" font-weight="bold" fill="#0F172A">CALIBRATION PROTOCOL &amp; ACCEPTANCE CRITERIA</text>
+      <line x1="6" y1="7.5" x2="86" y2="7.5" stroke="#E2E8F0" stroke-width="0.3" />
+
+      <text x="6" y="11.5" font-size="1.2" font-weight="bold" fill="#0284C7">1. RIGID SUBSTRATE MOUNTING</text>
+      <text x="6" y="15.0" font-size="1.1" fill="#334155">Affix 60×60 mm card onto rigid acrylic plate (surface flatness ≤ 0.05 mm).</text>
+
+      <text x="6" y="19.5" font-size="1.2" font-weight="bold" fill="#0284C7">2. WORKING DISTANCE &amp; POSE DIVERSITY</text>
+      <text x="6" y="23.0" font-size="1.1" fill="#334155">Hold at 45–50 cm under uniform, non-glare, diffuse illumination.</text>
+      <text x="6" y="26.5" font-size="1.1" fill="#334155">Capture 10 non-coplanar tilt poses (pitch / yaw / roll between 15° and 35°).</text>
+
+      <text x="6" y="31.0" font-size="1.2" font-weight="bold" fill="#0284C7">3. DETECTION &amp; RESIDUAL THRESHOLD</text>
+      <text x="6" y="34.5" font-size="1.1" fill="#334155">All 9 fiducials (IDs 20–28) must be simultaneously detected in every frame.</text>
+      <text x="6" y="38.0" font-size="1.1" fill="#047857" font-weight="600">Reprojection RMS error must strictly satisfy: RMS &lt; 0.50 px root-mean-square.</text>
+
+      <line x1="6" y1="41.5" x2="86" y2="41.5" stroke="#E2E8F0" stroke-width="0.3" />
+
+      <text x="6" y="45.5" font-size="1.2" font-weight="bold" fill="#DC2626">CLINICAL SAFETY GATING ENFORCEMENT</text>
+      <text x="6" y="49.0" font-size="1.05" fill="#475569">• Gate blocks clinical VDO metric logging until camera intrinsics pass.</text>
+      <text x="6" y="52.5" font-size="1.05" fill="#475569">• Stale optical telemetry (&gt;500 ms) yields MEASUREMENT_NOT_AVAILABLE.</text>
+      <text x="6" y="56.0" font-size="1.05" fill="#475569">• Uncalibrated lenses induce barrel/pincushion optical error up to ±2.8 mm.</text>
       
-      <line x1="5" y1="31" x2="79" y2="31" stroke="#E2E8F0" stroke-width="0.3" />
-      <text x="5" y="37" font-size="1.8" font-weight="bold" fill="#DC2626">CLINICAL SAFETY WARNING</text>
-      <text x="5" y="42" font-size="1.4" fill="#64748B">System remains in UNCALIBRATED estimation mode until the 3×3 card</text>
-      <text x="5" y="46" font-size="1.4" fill="#64748B">is successfully scanned. Pinhole intrinsics are mandatory for metric VDO.</text>
-      <text x="5" y="51" font-size="1.4" font-weight="bold" fill="#047857">Status: Calibration records timestamp, focal length &amp; optical center.</text>
+      <rect x="6" y="59.5" width="80" height="7.5" fill="#F0FDF4" stroke="#86EFAC" stroke-width="0.3" rx="1" />
+      <text x="46" y="64.5" font-size="1.1" font-weight="bold" fill="#15803D" text-anchor="middle">STATUS: Optical diagnostics gate active · OpenCV DICT_4X4_50</text>
     </g>
   </g>
 
   <!-- Sheet Footer Notes -->
-  <g transform="translate(18, 252)">
-    <text x="0" y="5" font-size="1.7" fill="#64748B">Maitri College of Dentistry &amp; Research Centre · Dept. of Prosthodontics · Dr. Deepanshu</text>
-    <text x="0" y="9.5" font-size="1.5" fill="#94A3B8">SmartBow AI Research Specification v1.2 · Grounded in Boucher (12th ed.) &amp; Winkler (2nd ed.)</text>
-    <text x="174" y="9.5" font-size="1.5" fill="#94A3B8" text-anchor="end">Page 1 of 1 · DIN A4 (210 × 297 mm)</text>
+  <g transform="translate(16, 272)">
+    <text x="0" y="3.5" font-size="1.5" font-weight="bold" fill="#334155">Maitri College of Dentistry &amp; Research Centre · Dept. of Prosthodontics · Dr. Deepanshu</text>
+    <text x="0" y="7.0" font-size="1.25" fill="#64748B">SmartBow AI Research Specification v1.2 · Grounded in Boucher (12th ed., Ch. 14, pp. 248–251) &amp; Winkler (2nd ed., Ch. 12, pp. 195–198)</text>
+    <text x="0" y="10.5" font-size="1.15" fill="#94A3B8">Fiducial Dictionary: DICT_4X4_50 · Scale Factor: 1.0000 (1:1 Physical Scale) · Dual-Axis Scale: 100mm H × 50mm V</text>
+    <text x="178" y="10.5" font-size="1.2" font-weight="bold" fill="#0284C7" text-anchor="end">Page 1 of 1 · DIN A4 (210 × 297 mm)</text>
   </g>
 </svg>`;
 }
+
+
 

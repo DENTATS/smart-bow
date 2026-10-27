@@ -1,13 +1,33 @@
 @import "tailwindcss";
 
 @layer base {
+  html, body, #root {
+    height: 100%;
+    min-height: 100dvh;
+    overflow-x: hidden;
+  }
+  
   body {
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    text-rendering: optimizeLegibility;
   }
   
   .font-mono {
     font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
   }
+}
+
+/* Safe area padding utilities for mobile edge-to-edge screens */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.mb-safe {
+  margin-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 @media print {

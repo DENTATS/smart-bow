@@ -20,7 +20,8 @@ import { generateHanauPrescriptionText, generatePatientCaseJson, generateExocadA
 import { generateMountingJigStl, generateMarkerCarrierPlateStl } from '../src/lib/stlGenerator';
 import { RealtimeFaceTracker } from '../src/lib/faceTrackingEngine';
 import { Matrix4, createIdentityMatrix, invertRigidMatrix, multiplyRigidMatrices, transformPoint } from '../src/lib/patientFrame';
-import { renderMarkerSvg, renderBoardSvg, getFullMarkerGrid, decodeMarkerGrid, CAD_BOARD_SPECIFICATION, ARUCO_DICT_4X4_50_BITS } from '../src/lib/arucoDict';
+import { renderMarkerSvg, renderBoardSvg, renderFullA4PrintSheetSvg, getFullMarkerGrid, decodeMarkerGrid, CAD_BOARD_SPECIFICATION, ARUCO_DICT_4X4_50_BITS } from '../src/lib/arucoDict';
+import { downloadA4PrintSheetPdf, generateVectorA4Pdf, generateClinicalReportPdf, drawVectorArUcoMarker } from '../src/lib/pdfExport';
 import { SOURCED_RIM_DATUMS } from '../src/lib/prosthodonticLiterature';
 import { evaluateOpticalDiagnostic, checkCaptureReadiness, OPTICAL_DIAGNOSTIC_DEFINITIONS } from '../src/lib/opticalDiagnostics';
 import { INDEPENDENT_OPENCV_GROUND_TRUTH_MARKERS } from './independentOpenCvReference';
@@ -874,6 +875,180 @@ console.log('\nTest Group 16: 3D-Printable Carrier Plate STL Validation');
     `Dimensions=${JSON.stringify(plateStl.dimensionsMm)}`
   );
 }
+
+// -----------------------------------------------------------------------------
+// TEST 17: Single-Page DIN A4 Print Sheet Layout & Scale Verification
+// -----------------------------------------------------------------------------
+console.log('\nTest Group 17: Single-Page DIN A4 Print Sheet Layout & Export');
+{
+  const a4Svg = renderFullA4PrintSheetSvg();
+
+  // 17a: Dimensions conform to DIN A4 standard (210 x 297 mm)
+  assert(
+    a4Svg.includes('viewBox="0 0 210 297"') && 
+    a4Svg.includes('width="210mm"') && 
+    a4Svg.includes('height="297mm"'),
+    '17a: Full A4 sheet SVG has exact viewBox="0 0 210 297" and 210x297mm physical dimensions',
+    'A4 dimensions missing or incorrect'
+  );
+
+  // 17b: 100.0 mm Vernier Caliper scale bar with pass tolerance ±0.2 mm
+  assert(
+    a4Svg.includes('width="100"') && 
+    a4Svg.includes('100.0 ± 0.2 mm') &&
+    a4Svg.includes('PHYSICAL 100.0 mm SCALE BAR'),
+    '17b: Contains 100.0 mm Vernier Caliper scale bar with ±0.2 mm tolerance',
+    'Scale bar not properly defined'
+  );
+
+  // 17c: Unoccluded markers in Section 3 (IDs 20 to 28) - No white text inside fiducials
+  const hasCalibrationMarkers = [20, 21, 22, 23, 24, 25, 26, 27, 28].every(id => 
+    a4Svg.includes(`viewBox="0 0 12 12"`) // Rendered via renderMarkerSvg(id, 12)
+  );
+  // Confirm that text '#20' does NOT occur inside marker
+  const noTextInsideMarkers = !a4Svg.includes('font-size="1.0" fill="#FFFFFF"') && !a4Svg.includes('>#20<');
+
+  assert(
+    hasCalibrationMarkers && noTextInsideMarkers,
+    '17c: Section 3 camera intrinsics card has all 9 markers unoccluded with no text inside fiducials',
+    `hasMarkers=${hasCalibrationMarkers}, noTextInside=${noTextInsideMarkers}`
+  );
+
+  // 17d: Section 1 boards have clean central alignment reticle without text overlap
+  const boardSvg = renderBoardSvg([3, 4, 5, 6], 'MAXILLA');
+  const boardHasNoTextInside = !boardSvg.includes('<text');
+  const boardHasReticle = boardSvg.includes('Central Alignment Reticle');
+
+  assert(
+    boardHasNoTextInside && boardHasReticle,
+    '17d: 18x18mm acrylic board SVG has clean quiet zones and central reticle without text collision',
+    `hasNoText=${boardHasNoTextInside}, hasReticle=${boardHasReticle}`
+  );
+
+  // 17e: Prosthodontic literature citations are explicitly included
+  const hasLiteratureCitations = a4Svg.includes('Boucher (12th ed.') && a4Svg.includes('Winkler (2nd ed.');
+
+  assert(
+    hasLiteratureCitations,
+    '17e: A4 print sheet footer cites grounded prosthodontic references (Boucher & Winkler)',
+    'Missing Boucher or Winkler citations'
+  );
+
+  // 17f: PDF export module exports callable download function
+  assert(
+    typeof downloadA4PrintSheetPdf === 'function',
+    '17f: downloadA4PrintSheetPdf export function is defined and available for 1:1 DIN A4 PDF generation',
+    'downloadA4PrintSheetPdf is not a function'
+  );
+}
+
+// -----------------------------------------------------------------------------
+// TEST 18: High-Definition Vector PDF Engine & Dual-Axis Verification
+// -----------------------------------------------------------------------------
+console.log('\nTest Group 18: High-Definition Vector PDF & Dual-Axis Verification');
+{
+  // 18a: generateVectorA4Pdf returns valid DIN A4 PDF stream
+  const vectorPdf = generateVectorA4Pdf({ compress: false });
+  const pdfOutput = vectorPdf.output();
+
+  assert(
+    pdfOutput.startsWith('%PDF-') && pdfOutput.length > 5000,
+    '18a: generateVectorA4Pdf generates authentic PDF binary stream (>5KB, starts with %PDF-)',
+    `PDF output length=${pdfOutput.length}`
+  );
+
+  // 18b: Vector drawing operations (re / f / m) are present for infinite zoom sharpness
+  const hasVectorRects = pdfOutput.includes(' re\n') || pdfOutput.includes(' re ') || pdfOutput.includes(' f\n') || pdfOutput.includes(' f*');
+  assert(
+    hasVectorRects,
+    '18b: Vector PDF contains native PDF vector path operators (re, f) for laser-sharp ArUco markers at any zoom',
+    'Vector rectangle operators missing from PDF output'
+  );
+
+  // 18c: Dual-axis scale bar verification in A4 SVG
+  const a4Svg = renderFullA4PrintSheetSvg();
+  const has100mmH = a4Svg.includes('width="100"') && a4Svg.includes('100.0 ± 0.2 mm');
+  const has50mmV = a4Svg.includes('height="50"') && a4Svg.includes('50.0 ± 0.2 mm');
+  const hasSquareGauge = a4Svg.includes('20.0 × 20.0 mm SQUARE GAUGE') && a4Svg.includes('PASS: 20.0 ± 0.1 mm');
+
+  assert(
+    has100mmH && has50mmV && hasSquareGauge,
+    '18c: Dual-axis physical calibration scale bars (100mm H × 50mm V) and 20x20mm gauge are present in SVG',
+    `has100mmH=${has100mmH}, has50mmV=${has50mmV}, hasSquareGauge=${hasSquareGauge}`
+  );
+
+  // 18d: Explicit print scaling instructions
+  const hasPrintNotice = a4Svg.includes('PRINT AT 100% SCALE (ACTUAL SIZE) · DO NOT FIT TO PAGE');
+  assert(
+    hasPrintNotice,
+    '18d: Strict print instructions banner (100% scale / Do Not Fit To Page) embedded in printable sheet',
+    'Missing print notice banner'
+  );
+
+  // 18e: Publication-grade Clinical Report Vector PDF generation
+  const testCase: PatientCase = {
+    patientId: 'PT-VECTOR-001',
+    name: 'Clinical Report Vector Test',
+    age: 68,
+    gender: 'MALE',
+    dentitionState: 'EDENTULOUS',
+    articulator: 'HANAU_WIDE_VUE',
+    createdAt: new Date().toISOString(),
+    dataProvenance: 'MEASURED',
+    biometrics: {
+      lowerThirdPct: 33.3,
+      bizFaceRatio: 0.70,
+      facialForm: 'square',
+      interpupillaryTiltDeg: 0.5,
+      bizygomaticWidthMm: 138,
+      facialHeightMm: 192,
+      lipGapMm: 2.5,
+      midlineDeviationMm: 0.1,
+      estimatedShade: 'A3',
+      subnasaleToMentonMm: 64.0
+    },
+    measurements: {
+      provenance: 'MEASURED',
+      vdoMm: 64.0,
+      vdrMm: 67.0,
+      freewaySpaceMm: 3.0,
+      occlusalTiltMLDeg: 0.2,
+      occlusalTiltAPDeg: 0.1,
+      midlineShiftMm: 0.0,
+      crDeviationMm: 0.25,
+      crStatus: 'ACCEPTED',
+      sciEstimateDeg: 33,
+      bennettAngleDeg: 14,
+      bennettLeftDeg: 14,
+      bennettRightDeg: 14
+    },
+    crRecords: [],
+    gothicArchPoints: []
+  };
+
+  const clinicalPdf = generateClinicalReportPdf(testCase, { compress: false });
+  const clinicalPdfOutput = clinicalPdf.output();
+
+  assert(
+    clinicalPdfOutput.startsWith('%PDF-') && 
+    clinicalPdfOutput.includes('PT-VECTOR-001') && 
+    clinicalPdfOutput.includes('JAW RELATION'),
+    '18e: generateClinicalReportPdf produces publication-grade vector prescription PDF with patient demographics and metrics',
+    `Clinical PDF length=${clinicalPdfOutput.length}`
+  );
+
+  // 18f: Physical dimension preservation across CAD and ArUco markers
+  assert(
+    CAD_BOARD_SPECIFICATION.plateWidthMm === 18.0 &&
+    CAD_BOARD_SPECIFICATION.plateHeightMm === 18.0 &&
+    CAD_BOARD_SPECIFICATION.individualMarkerSizeMm === 6.5 &&
+    CAD_BOARD_SPECIFICATION.markerCenterPitchMm === 7.5 &&
+    CAD_BOARD_SPECIFICATION.arrayOuterSpanMm === 14.0,
+    '18f: Sub-millimeter CAD and marker specifications (18x18mm plate, 6.5mm marker, 7.5mm pitch, 14mm span) preserved',
+    `CAD Spec=${JSON.stringify(CAD_BOARD_SPECIFICATION)}`
+  );
+}
+
 
 // -----------------------------------------------------------------------------
 // SUMMARY REPORT

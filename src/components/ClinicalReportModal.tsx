@@ -12,6 +12,7 @@ import {
   generatePatientCaseJson, 
   downloadFile 
 } from '../lib/exportArticulator';
+import { downloadClinicalReportPdf } from '../lib/pdfExport';
 
 interface ClinicalReportModalProps {
   isOpen: boolean;
@@ -25,6 +26,7 @@ export const ClinicalReportModal: React.FC<ClinicalReportModalProps> = ({
   patientCase,
 }) => {
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
 
   if (!isOpen) return null;
 
@@ -34,6 +36,18 @@ export const ClinicalReportModal: React.FC<ClinicalReportModalProps> = ({
   const showNotice = (msg: string) => {
     setExportNotice(msg);
     setTimeout(() => setExportNotice(null), 3500);
+  };
+
+  const handleDownloadPdf = async () => {
+    try {
+      setIsGeneratingPdf(true);
+      await downloadClinicalReportPdf(patientCase);
+      showNotice(`Downloaded HD Clinical Report PDF (${patientCase.patientId})`);
+    } catch (err) {
+      console.error('Failed to export Clinical PDF:', err);
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   const handlePrint = () => {
@@ -81,6 +95,15 @@ export const ClinicalReportModal: React.FC<ClinicalReportModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap justify-end">
+            <button
+              onClick={handleDownloadPdf}
+              disabled={isGeneratingPdf}
+              title="Download high-definition publication-grade vector PDF"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-600 border border-teal-600 rounded-lg shadow-sm transition-colors cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>{isGeneratingPdf ? 'Generating PDF...' : 'Download HD PDF'}</span>
+            </button>
             <button
               onClick={handleDownloadCsv}
               title="Export complete record as CSV for Microsoft Excel, SPSS, R, and statistical research"

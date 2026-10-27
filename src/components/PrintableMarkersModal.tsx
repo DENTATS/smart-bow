@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { X, Printer, Download, Check, AlertCircle, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { X, Printer, Download, Check, AlertCircle, ShieldAlert, CheckCircle2, FileText, Loader2, Eye } from 'lucide-react';
 import { 
   ARUCO_MARKERS_REGISTRY, 
   getFullMarkerGrid, 
@@ -14,6 +14,7 @@ import {
   renderFullA4PrintSheetSvg, 
   CAD_BOARD_SPECIFICATION 
 } from '../lib/arucoDict';
+import { downloadA4PrintSheetPdf } from '../lib/pdfExport';
 import { generateMarkerCarrierPlateStl } from '../lib/stlGenerator';
 import { SOURCED_RIM_DATUMS } from '../lib/prosthodonticLiterature';
 
@@ -32,7 +33,15 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
     }
     return '100.0';
   });
+  const [caliperVerticalMm, setCaliperVerticalMm] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('smartbow_measured_vertical_mm') || '50.0';
+    }
+    return '50.0';
+  });
   const [activeTab, setActiveTab] = useState<'sheet' | 'cad_spec' | 'scale_check'>('sheet');
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
+  const [showFullSheetPreview, setShowFullSheetPreview] = useState<boolean>(false);
 
   if (!isOpen) return null;
 
@@ -49,6 +58,20 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
     a.download = 'SmartBow_A4_Print_Sheet_100pct_Scale.svg';
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadA4Pdf = async (mode: 'VECTOR' | 'RASTER_600DPI' = 'VECTOR') => {
+    try {
+      setIsGeneratingPdf(true);
+      const filename = mode === 'VECTOR'
+        ? 'SmartBow_A4_Print_Sheet_100pct_Scale.pdf'
+        : 'SmartBow_A4_Print_Sheet_600DPI_Fallback.pdf';
+      await downloadA4PrintSheetPdf(filename, { mode });
+    } catch (err) {
+      console.error('Failed to generate 1:1 PDF:', err);
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   const handleDownloadBoardSvg = (type: 'MAXILLA' | 'MANDIBLE') => {
@@ -113,16 +136,23 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
     );
   };
 
-  // Physical Caliper Metrology: Strict ±0.20 mm tolerance
+  // Physical Caliper Metrology: Strict ±0.20 mm tolerance on both axes
   const parsedCaliper = parseFloat(caliperMeasurementMm);
   const caliperDelta = !isNaN(parsedCaliper) ? Number((parsedCaliper - 100.0).toFixed(2)) : 0;
-  const isScalePassed = !isNaN(parsedCaliper) && Math.abs(caliperDelta) <= 0.20;
+  const isHorizontalPassed = !isNaN(parsedCaliper) && Math.abs(caliperDelta) <= 0.20;
+
+  const parsedVertical = parseFloat(caliperVerticalMm);
+  const verticalDelta = !isNaN(parsedVertical) ? Number((parsedVertical - 50.0).toFixed(2)) : 0;
+  const isVerticalPassed = !isNaN(parsedVertical) && Math.abs(verticalDelta) <= 0.20;
+
+  const isScalePassed = isHorizontalPassed && isVerticalPassed;
   const scaleCorrectionFactor = !isNaN(parsedCaliper) && parsedCaliper > 0 ? (100.0 / parsedCaliper).toFixed(4) : '1.0000';
 
   const handleSaveCaliperVerification = () => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('smartbow_marker_caliper_verified', isScalePassed ? 'true' : 'false');
       localStorage.setItem('smartbow_measured_scale_mm', caliperMeasurementMm);
+      localStorage.setItem('smartbow_measured_vertical_mm', caliperVerticalMm);
       localStorage.setItem('smartbow_scale_factor', scaleCorrectionFactor);
     }
   };
@@ -169,20 +199,48 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleDownloadA4Svg}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors cursor-pointer"
+              title="Download 1:1 Scale Vector SVG"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>Download A4 SVG</span>
+              <span>Vector SVG</span>
+            </button>
+            <button
+              onClick={() => handleDownloadA4Pdf('VECTOR')}
+              disabled={isGeneratingPdf}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg shadow transition-colors cursor-pointer"
+              title="Download 1:1 Scale HD Native Vector PDF (DIN A4)"
+            >
+              {isGeneratingPdf ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Generating...</span>
+                </>
+              ) : (
+                <>
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Download HD Vector PDF</span>
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => handleDownloadA4Pdf('RASTER_600DPI')}
+              disabled={isGeneratingPdf}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 rounded-lg border border-slate-700 transition-colors cursor-pointer"
+              title="Download 600 DPI High-Resolution Raster Fallback PDF"
+            >
+              <FileText className="w-3.5 h-3.5 text-slate-400" />
+              <span>600 DPI Raster PDF</span>
             </button>
             <button
               onClick={handlePrint}
               className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-lg shadow transition-colors cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>Print Sheet (100% Scale)</span>
+              <span>Print (100% Scale)</span>
             </button>
             <button
               onClick={onClose}
@@ -205,7 +263,7 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
             onClick={() => setActiveTab('scale_check')}
             className={`pb-1.5 border-b-2 font-semibold transition-colors cursor-pointer ${activeTab === 'scale_check' ? 'border-cyan-400 text-cyan-400' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
           >
-            100mm Scale Verification Tool
+            Dual-Axis Caliper Tool (100mm H × 50mm V)
           </button>
           <button
             onClick={() => setActiveTab('cad_spec')}
@@ -229,54 +287,128 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
           </div>
 
           {activeTab === 'scale_check' && (
-            <div className="p-5 bg-slate-900 border border-slate-800 rounded-xl space-y-4">
-              <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-cyan-400" />
-                <span>Physical Caliper Verification Tool</span>
-              </h4>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Place the jaws of a calibrated Vernier caliper across the 0 mm and 100 mm tick marks of the printed scale bar. Enter your reading below to verify that printer driver scaling has not corrupted the optical geometry.
-              </p>
+            <div className="p-5 bg-slate-900 border border-slate-800 rounded-xl space-y-5">
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-cyan-400" />
+                  <span>Dual-Axis Physical Caliper Metrology Tool (±0.20 mm Gate)</span>
+                </h4>
+                <p className="text-xs text-slate-400 leading-relaxed mt-1">
+                  Place the jaws of a calibrated digital Vernier caliper across the 0 mm and 100 mm tick marks of the horizontal bar, and across the 0 mm and 50 mm marks of the vertical bar. This detects anamorphic aspect-ratio distortion caused by printer roller feed slippage.
+                </p>
+              </div>
 
-              <div className="flex items-center gap-4 p-4 bg-slate-950 rounded-lg border border-slate-800">
-                <div>
-                  <label className="block text-[11px] font-mono text-slate-400 mb-1">Caliper Reading (mm):</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={caliperMeasurementMm}
-                    onChange={(e) => setCaliperMeasurementMm(e.target.value)}
-                    className="w-32 px-3 py-1.5 bg-slate-900 border border-slate-700 rounded text-sm font-mono font-bold text-white focus:outline-none focus:border-cyan-400"
-                  />
+              {/* Dual Inputs Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Horizontal Scale Check */}
+                <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-mono font-bold text-white">X-Axis: 100.0 mm Scale Bar</span>
+                    <span className="text-[10px] font-mono text-cyan-400">Target: 100.0 ± 0.2 mm</span>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-mono text-slate-400 mb-1">Caliper Reading (mm):</label>
+                    <input
+                      type="number"
+                      step="0.05"
+                      value={caliperMeasurementMm}
+                      onChange={(e) => setCaliperMeasurementMm(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded text-sm font-mono font-bold text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-xs font-mono pt-1">
+                    <span className="text-slate-400 text-[11px]">Horizontal Delta:</span>
+                    <span className={`font-bold ${isHorizontalPassed ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {caliperDelta > 0 ? `+${caliperDelta.toFixed(2)}` : caliperDelta.toFixed(2)} mm
+                    </span>
+                  </div>
+                  <div>
+                    {isHorizontalPassed ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
+                        <Check className="w-3 h-3" />
+                        <span>X-Axis PASS (1:1 scale)</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-mono text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/30">
+                        <AlertCircle className="w-3 h-3" />
+                        <span>X-Axis FAIL (|Δ| &gt; 0.20 mm)</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                <div className="border-l border-slate-800 pl-4 space-y-1">
-                  <span className="text-[10px] font-mono uppercase text-slate-400 block">Verification Decision:</span>
+                {/* Vertical Scale Check */}
+                <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-mono font-bold text-white">Y-Axis: 50.0 mm Scale Bar</span>
+                    <span className="text-[10px] font-mono text-cyan-400">Target: 50.0 ± 0.2 mm</span>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-mono text-slate-400 mb-1">Caliper Reading (mm):</label>
+                    <input
+                      type="number"
+                      step="0.05"
+                      value={caliperVerticalMm}
+                      onChange={(e) => setCaliperVerticalMm(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded text-sm font-mono font-bold text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-xs font-mono pt-1">
+                    <span className="text-slate-400 text-[11px]">Vertical Delta:</span>
+                    <span className={`font-bold ${isVerticalPassed ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {verticalDelta > 0 ? `+${verticalDelta.toFixed(2)}` : verticalDelta.toFixed(2)} mm
+                    </span>
+                  </div>
+                  <div>
+                    {isVerticalPassed ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
+                        <Check className="w-3 h-3" />
+                        <span>Y-Axis PASS (No roller stretch)</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-mono text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/30">
+                        <AlertCircle className="w-3 h-3" />
+                        <span>Y-Axis FAIL (|Δ| &gt; 0.20 mm)</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Combined Gate Decision & Persistence */}
+              <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-mono uppercase text-slate-400 block">Overall Verification Status:</span>
                   {isScalePassed ? (
                     <div className="space-y-1">
                       <span className="inline-flex items-center gap-1.5 text-xs font-bold font-mono text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded border border-emerald-500/30">
                         <Check className="w-3.5 h-3.5" />
-                        <span>PASS (100.0 ± 0.2 mm) · Δ = {caliperDelta > 0 ? `+${caliperDelta}` : caliperDelta} mm · Scale Confirmed 1:1</span>
+                        <span>PASS: Both X &amp; Y axes meet ±0.20 mm physical tolerance · 1:1 Scale Confirmed</span>
                       </span>
-                      <button
-                        onClick={handleSaveCaliperVerification}
-                        className="block mt-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs rounded transition-colors cursor-pointer"
-                      >
-                        Confirm &amp; Save Caliper Verification
-                      </button>
+                      <p className="text-[11px] text-slate-400">
+                        Ready for acrylic carrier plate mounting and clinical tracking.
+                      </p>
                     </div>
                   ) : (
                     <div className="space-y-1">
                       <span className="inline-flex items-center gap-1.5 text-xs font-bold font-mono text-rose-400 bg-rose-500/10 px-2.5 py-1 rounded border border-rose-500/30">
                         <AlertCircle className="w-3.5 h-3.5" />
-                        <span>FAIL: Discrepancy |Δ| = {Math.abs(caliperDelta)} mm &gt; 0.20 mm · Adjust printer driver scaling</span>
+                        <span>BLOCKED: Dimensional discrepancy exceeds ±0.20 mm tolerance</span>
                       </span>
                       <p className="text-[10px] text-amber-300 font-mono">
-                        Correction factor: {scaleCorrectionFactor}x. Check that browser print scale is set to &quot;100% / Actual Size&quot; and margins are None.
+                        Verify print settings: Scale MUST be &quot;Actual Size / 100%&quot;, Margins &quot;None&quot;. Do NOT use &quot;Fit to Printable Area&quot;.
                       </p>
                     </div>
                   )}
                 </div>
+
+                <button
+                  onClick={handleSaveCaliperVerification}
+                  disabled={!isScalePassed}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-bold text-xs rounded-lg transition-colors cursor-pointer shrink-0"
+                >
+                  Save Caliper Verification
+                </button>
               </div>
             </div>
           )}
@@ -348,27 +480,131 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
 
           {activeTab === 'sheet' && (
             <>
-              {/* Physical 100mm Scale Verification Ruler */}
-              <div className="border border-dashed border-slate-700 p-4 rounded-xl bg-black/40 flex flex-col items-center">
-                <div className="text-[11px] font-mono text-slate-300 font-semibold mb-2 flex items-center gap-2">
-                  <span>PHYSICAL 100.0 mm SCALE BAR — VERIFY WITH VERNIER CALIPER BEFORE CUTTING</span>
-                  <span className="text-[10px] text-cyan-400 font-normal">(Target: Exactly 100.0 ± 0.2 mm)</span>
+              {/* Dual Export Quick Actions Banner */}
+              <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl flex flex-wrap items-center justify-between gap-3 no-print">
+                <div>
+                  <h4 className="text-xs font-bold text-white uppercase font-mono flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-cyan-400" />
+                    <span>Single-Page DIN A4 Calibrated Print File (210 × 297 mm)</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    OpenCV DICT_4X4_50 fiducials with clean 1-bit outer borders, 100.0 mm Vernier caliper bar, and camera intrinsics card.
+                  </p>
                 </div>
-                <div 
-                  className="w-[100mm] max-w-full h-8 bg-white text-black flex flex-col justify-between px-1 py-0.5 font-mono text-[9px] relative border border-slate-900"
-                  style={{ width: '100mm' }}
-                >
-                  <div className="flex justify-between w-full">
-                    <span>0mm</span>
-                    <span>25mm</span>
-                    <span>50mm</span>
-                    <span>75mm</span>
-                    <span>100mm</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowFullSheetPreview(!showFullSheetPreview)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors cursor-pointer"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>{showFullSheetPreview ? 'Hide Sheet Layout' : 'Preview Full Sheet'}</span>
+                  </button>
+                  <button
+                    onClick={handleDownloadA4Svg}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Vector SVG</span>
+                  </button>
+                  <button
+                    onClick={() => handleDownloadA4Pdf('VECTOR')}
+                    disabled={isGeneratingPdf}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
+                    title="Download 1:1 Scale HD Native Vector PDF"
+                  >
+                    {isGeneratingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+                    <span>HD Vector PDF</span>
+                  </button>
+                  <button
+                    onClick={() => handleDownloadA4Pdf('RASTER_600DPI')}
+                    disabled={isGeneratingPdf}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 rounded-lg border border-slate-700 transition-colors cursor-pointer"
+                    title="Download 600 DPI Raster Fallback PDF"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-slate-400" />
+                    <span>600 DPI PDF</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Collapsible Full A4 Sheet SVG Preview */}
+              {showFullSheetPreview && (
+                <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-2 no-print">
+                  <div className="flex items-center justify-between text-xs font-mono text-slate-300 pb-2 border-b border-slate-800">
+                    <span>Full Single-Page DIN A4 Layout Preview (210 × 297 mm)</span>
+                    <span className="text-[10px] text-emerald-400">Clean fiducials · No overlaps · Dual 100mm/50mm Scale Bars</span>
                   </div>
-                  <div className="flex justify-between w-full border-t border-black pt-0.5">
-                    {Array.from({ length: 21 }, (_, i) => (
-                      <div key={i} className={`w-px bg-black ${i % 5 === 0 ? 'h-3.5' : 'h-1.5'}`} />
-                    ))}
+                  <div className="bg-white rounded-lg p-2 flex justify-center overflow-x-auto shadow-inner max-h-[500px]">
+                    <div 
+                      className="w-full max-w-[500px]"
+                      dangerouslySetInnerHTML={{ __html: renderFullA4PrintSheetSvg() }} 
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Dual-Axis Physical Scale Verification Gauge Display */}
+              <div className="border border-dashed border-slate-700 p-4 rounded-xl bg-black/40 flex flex-col gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] font-mono text-slate-300 font-semibold gap-1">
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>DUAL-AXIS SCALE BARS &amp; 20×20mm GAUGE (ACTUAL SIZE 1:1)</span>
+                  </span>
+                  <span className="text-[10px] text-cyan-400 font-normal">Tolerance: ±0.20 mm · Verify with caliper</span>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center bg-slate-950 p-3 rounded-lg border border-slate-800">
+                  {/* 100mm Horizontal */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-mono text-slate-400 block">X-AXIS (100.0 mm):</span>
+                    <div 
+                      className="w-full max-w-[100mm] h-7 bg-white text-black flex flex-col justify-between px-1 py-0.5 font-mono text-[8px] relative border border-slate-900"
+                    >
+                      <div className="flex justify-between w-full">
+                        <span>0</span>
+                        <span>25</span>
+                        <span>50</span>
+                        <span>75</span>
+                        <span>100mm</span>
+                      </div>
+                      <div className="flex justify-between w-full border-t border-black pt-0.5">
+                        {Array.from({ length: 21 }, (_, i) => (
+                          <div key={i} className={`w-px bg-black ${i % 5 === 0 ? 'h-3' : 'h-1.5'}`} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 50mm Vertical */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-mono text-slate-400 block">Y-AXIS (50.0 mm Feed Check):</span>
+                    <div 
+                      className="w-full max-w-[50mm] h-7 bg-white text-black flex flex-col justify-between px-1 py-0.5 font-mono text-[8px] relative border border-slate-900"
+                    >
+                      <div className="flex justify-between w-full">
+                        <span>0</span>
+                        <span>25</span>
+                        <span>50mm</span>
+                      </div>
+                      <div className="flex justify-between w-full border-t border-black pt-0.5">
+                        {Array.from({ length: 11 }, (_, i) => (
+                          <div key={i} className={`w-px bg-black ${i % 5 === 0 ? 'h-3' : 'h-1.5'}`} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 20x20mm Gauge */}
+                  <div className="flex items-center gap-3">
+                    <div className="w-[20mm] h-[20mm] bg-white border-2 border-black relative flex items-center justify-center shrink-0">
+                      <div className="w-full h-px bg-rose-500 absolute" />
+                      <div className="h-full w-px bg-rose-500 absolute" />
+                      <div className="w-1.5 h-1.5 rounded-full border border-black z-10" />
+                    </div>
+                    <div className="text-[10px] font-mono text-slate-400 leading-tight">
+                      <span className="font-bold text-white block">20.0 × 20.0 mm GAUGE</span>
+                      <span>Crosshair center check</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -467,6 +703,38 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
                     {renderArucoSvg(12, 14)}
                     <span className="text-[11px] font-bold text-purple-400 font-mono">H02 (ID 12)</span>
                     <span className="text-[9px] text-slate-400">Hanau Lower Base</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 3: Camera Calibration Card */}
+              <div className="space-y-4 pt-2">
+                <div className="border-b border-slate-800 pb-2">
+                  <h4 className="text-sm font-bold text-cyan-400 uppercase font-mono">
+                    3. Camera Intrinsics Calibration Target (60.0 × 60.0 mm Rigid Card)
+                  </h4>
+                  <p className="text-xs text-slate-400">3×3 ArUco array (IDs 20–28, Pitch 18.0 mm) with pure unoccluded borders</p>
+                </div>
+
+                <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl flex flex-col sm:flex-row items-center gap-6">
+                  <div className="bg-white p-2 rounded-lg border border-slate-300 shrink-0">
+                    <div className="grid grid-cols-3 gap-1.5 w-[72px] h-[72px] items-center justify-center">
+                      {[20, 21, 22, 23, 24, 25, 26, 27, 28].map(id => (
+                        <div key={id} className="flex items-center justify-center">
+                          {renderArucoSvg(id, 6)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-2 text-xs">
+                    <span className="font-bold text-white block">Planar Intrinsics Array (OpenCV DICT_4X4_50)</span>
+                    <p className="text-slate-400 text-[11px] leading-relaxed">
+                      All 9 markers have clean 1-bit outer borders without text occlusion. Resolves camera focal length (fx, fy), optical principal point (cx, cy), and radial lens distortion parameters prior to clinical capture.
+                    </p>
+                    <div className="flex items-center gap-2 text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20 w-fit">
+                      <Check className="w-3 h-3" />
+                      <span>Reprojection Target: RMS &lt; 0.50 px</span>
+                    </div>
                   </div>
                 </div>
               </div>

@@ -1,59 +1,104 @@
-# Implementation Plan — 1:1 A4 ArUco Fiducial Printer File Optimization & Dual SVG/PDF Export
+# High-Definition Print-Ready PDF & Vector Calibration Repair
 
-Resolve fiducial overlapping and clipping issues in the A4 printable sheet (`SmartBow_A4_Print_Sheet_100pct_Scale_b00d7131.svg`), preserve strict OpenCV `DICT_4X4_50` fiducial geometry, and provide high-fidelity 1:1 Vector SVG and printable PDF exports in the SmartBow AI application.
+Fix the poor print quality of exported PDFs in SmartBow AI by replacing canvas rasterization with a dual-engine vector PDF architecture. This preserves exact physical dimensions, ensures infinite zoom sharpness for OpenCV ArUco markers, and adds dual-axis caliper verification.
 
----
+## User Review & Critical Decisions
 
-## 1. Problem Diagnosis & Root Causes
-
-1. **Section 1 (18×18 mm Occlusal Rim Arrays)**:
-   - In `renderBoardSvg`, marker ID labels (`#3`, `#4`, etc.) are positioned at `y = p.y + markerSizeMm + 1.2`. Because the top markers are at `y = 2.0` (height 6.5 mm), the text appears at `y = 9.7 mm`, which collides directly with the top black border of the bottom markers at `y = 9.5 mm`.
-   - The central label `"MAXILLA"` / `"MANDIBLE"` (approx. 5 mm wide) is drawn in the 1.0 mm gap between left and right markers, occluding fiducial quiet zones.
-2. **Section 2 (14×14 mm Facial & Articulator Markers)**:
-   - Facial markers (F01–F03) and Hanau articulator adapters (H01–H02) are crowded into a single generic section without distinct visual grouping or sufficient card boundaries.
-3. **Section 3 (60×60 mm 3×3 Intrinsics Calibration Grid)**:
-   - White text labels (`#20`, `#21`, ..., `#28`) were rendered inside the 12×12 mm ArUco markers at `y = 11.2 mm`, directly piercing the outer black ArUco perimeter and corrupting corner detection.
-4. **Export Requirements**:
-   - The user selected **Fix overlapping elements and optimize the single-page A4 layout** and **Both clean vector SVG and 1:1 printable PDF**.
+> [!IMPORTANT]
+> The clarifying questions have been confirmed by the user:
+> - **PDF Architecture**: Dual-engine vector PDF with embedded 600 DPI fallback raster.
+> - **Document Scope**: Both Printable Marker Sheets and Clinical Report / Lab Prescription.
+> - **Dimensional Verification**: Dual 100 mm horizontal and 50 mm vertical scale bars (±0.2 mm tolerance).
 
 ---
 
-## 2. Proposed Changes
+## 1. Overview & Core Concept
 
-### Target Files:
+- **What It Does**: Replaces the blurry HTML5 `<canvas>` rasterization pipeline with direct native PDF vector drawing via `jsPDF`. Every ArUco cell, fiducial boundary, cut guide, text label, and Vernier scale bar is rendered as pure mathematical vectors mapped 1:1 to DIN A4 (210 × 297 mm).
+- **Target Audience**: Prosthodontists, postgraduate dental residents, and dental lab technicians using mobile devices (Motorola Edge 70 Fusion, Android browsers, tablets, and desktop workstations).
+- **Key Value**: Guarantees sub-millimeter computer-vision accuracy during patient face and jaw relation scanning, preventing optical tracking failure caused by blurry or rescaled printer outputs.
+
+---
+
+## 2. User Experience & Visual Design
+
+### Key User Flows
+1. **Marker Sheet Download Flow**:
+   - User opens **Settings** or **Home** $\rightarrow$ taps **Print Marker Sheet**.
+   - Modal displays the updated A4 preview showing **dual scale bars (100 mm horizontal + 50 mm vertical)**.
+   - Prominent print warning is shown: `"MANDATORY: PRINT AT 100% (ACTUAL SIZE) · DISABLE FIT TO PAGE"`.
+   - User taps **Download HD Vector PDF (A4)** $\rightarrow$ browser downloads an authentic vector PDF that remains razor-sharp at 10,000% zoom.
+   - Caliper check input allows the user to record their physical ruler measurement before clinical tracking.
+
+2. **Clinical Report PDF Export Flow**:
+   - User navigates to **Clinical Rx** in the top navigation or Home screen.
+   - User clicks **Download Clinical Report (HD PDF)**.
+   - System compiles patient biometrics, jaw relation measurements (VDO, CR, Freeway Space, SCI, Bennett angles), and simulation watermarks into a publication-grade, crisp vector PDF.
+
+### Visual Identity & Theme
+- **Theme**: Minimal medical-software styling with clean white substrate (`#FFFFFF`), high-contrast dark text (`#0F172A`), restrained clinical teal accent (`#0D9488`), and clear warning banners (`#DC2626`).
+- **Typography**: Clean vector sans-serif headers with monospaced tabular figures (`Courier` / `Helvetica`) for coordinates, angles, and scale ticks.
+- **Dual Scale Bars**: 
+  - Horizontal: 100.0 mm Vernier caliper bar with 1 mm minor, 5 mm mid, and 10 mm major ticks.
+  - Vertical: 50.0 mm height check bar with caliper alignment arrows to detect vertical paper feed distortion.
+
+---
+
+## 3. Key Product Decisions & Trade-Offs
+
+- **Decision 1: Native Vector PDF Primitives vs. High-DPI Canvas Rasterization**
+  - *Chosen Approach*: Direct PDF vector construction via `jsPDF` (`pdf.rect()`, `pdf.line()`, `pdf.text()`) backed by a 600 DPI fallback generator.
+  - *Why*: Canvas rasterization is inherently bounded by pixel grid resolution and mobile GPU memory limits. In contrast, native PDF vector paths are infinitely scalable, render with zero compression artifacts, and produce tiny file sizes (~40 KB vs ~6 MB).
+  - *Alternatives Considered*: 1200 DPI canvas rendering was rejected because mobile Android browsers (Motorola Edge 70 Fusion) crash or throw out-of-memory errors on massive $9920 \times 14032$ px canvas buffers.
+
+- **Decision 2: Dual Scale Bars (Horizontal 100 mm & Vertical 50 mm)**
+  - *Chosen Approach*: Include both horizontal (100 mm) and vertical (50 mm) Vernier caliper verification bars on the DIN A4 print sheet.
+  - *Why*: Office laser and inkjet printers often suffer from non-isotropic roller slippage (anamorphic scaling), stretching the paper along the feed axis while maintaining the transverse axis. Dual-axis bars allow clinicians to immediately catch single-axis distortion.
+
+---
+
+## 4. Technical Architecture & Data Strategy
+
+```
+┌────────────────────────────────────────────────────────┐
+│                   SmartBow AI Client                   │
+├───────────────────────────┬────────────────────────────┤
+│ PrintableMarkersModal.tsx │   ClinicalReportModal.tsx  │
+└─────────────┬─────────────┴─────────────┬──────────────┘
+              │                           │
+              ▼                           ▼
+┌────────────────────────────────────────────────────────┐
+│                      src/lib/                          │
+├───────────────────────────┬────────────────────────────┤
+│       arucoDict.ts        │        pdfExport.ts        │
+│ • renderFullA4SheetSvg    │ • downloadA4PrintSheetPdf  │
+│ • DICT_4X4_50 bitmatrices │ • downloadClinicalReportPdf│
+│ • Dual Scale Bars (H & V) │ • Native jsPDF Vector Eng. │
+│ • CAD 18x18mm Datums      │ • 600 DPI Fallback Engine  │
+└───────────────────────────┴────────────────────────────┘
+              │                           │
+              ▼                           ▼
+┌────────────────────────────────────────────────────────┐
+│              Output Verification & Safety              │
+├────────────────────────────────────────────────────────┤
+│ • DIN A4 210 × 297 mm exact physical boundary          │
+│ • Binary 1-bit ArUco cells (14mm, 18mm, 12mm)          │
+│ • 86+ automated tests in test/runTests.ts              │
+└────────────────────────────────────────────────────────┘
+```
+
+### Component & File Modifications
 1. `src/lib/arucoDict.ts`:
-   - Redesign `renderBoardSvg()` to keep the 18×18 mm active fiducial square 100% free of overlapping text; place board identifiers and CAD specs cleanly outside the array perimeter.
-   - Refactor `renderFullA4PrintSheetSvg()`:
-     - **Scale Bar**: 100.0 mm Vernier caliper scale bar with crisp 1 mm, 5 mm, and 10 mm ticks, tolerance bounds (±0.5 mm), and caliper jaw indicator arrows.
-     - **Section 1**: 4 distinct carrier cards (Maxilla, Mandible, Spare Maxilla, Spare Mandible) with outer 20×26 mm cut bounds, center alignment crosshairs, and clear external ID tags.
-     - **Section 2**: Grouped into two visual subsections:
-       - *Facial Cranial Landmarks*: F01 Glabella/Nasion (ID 0), F02 Right Zygoma (ID 1), F03 Left Zygoma (ID 2).
-       - *Articulator Mechanical References*: H01 Hanau Upper Condylar (ID 11), H02 Hanau Lower Member (ID 12).
-     - **Section 3**: Clean 60×60 mm 3×3 ArUco calibration target with zero internal text overlays (pure OpenCV fiducials with certified 1-bit black borders) + right-side clinical calibration protocol panel.
-2. `public/assets/aistudio/SmartBow_A4_Print_Sheet_100pct_Scale_b00d7131.svg`:
-   - Overwrite with the corrected, pristine, 100% scale vector SVG file.
-3. `package.json` & PDF Export:
-   - Install `jspdf` (`npm install jspdf`).
-   - Implement client-side 1:1 DIN A4 vector PDF generation in `src/lib/pdfExport.ts` (or direct vector canvas-to-PDF rendering at 300 DPI 1:1 scale matching 210 × 297 mm exact physical size).
-4. `src/components/PrintableMarkersModal.tsx`:
-   - Add dual export action buttons: **Download Vector SVG** and **Download 1:1 Printable PDF**.
-   - Include direct browser print stylesheet configuration (`@page { size: A4 portrait; margin: 0; }`) to guarantee 100% actual size printing without driver auto-shrink.
-   - Embed interactive SVG live preview with zoom controls.
-5. `test/opticalGating.test.ts` & marker tests:
-   - Verify that test suite continues to pass with 0 failures.
-
----
-
-## 3. Verification Plan
-
-1. **Automated Test Suite**:
-   - Run `npm run test` (80 tests across 16 test suites) to ensure marker decoding, rotation invariance, optical gating, and CAD specifications remain 100% passing.
-2. **SVG Dimensional & Geometry Audit**:
-   - Verify that all markers have intact 1-bit outer black perimeters with zero overlapping glyphs.
-   - Verify that the 100 mm scale bar spans exactly 100 mm in document coordinates.
-   - Verify total sheet bounds are exactly `210mm × 297mm` with `viewBox="0 0 210 297"`.
-3. **Dual Export Verification**:
-   - Verify SVG download produces valid, well-formed XML.
-   - Verify PDF download generates an exact DIN A4 PDF document at 1:1 physical dimensions.
-4. **Applet Compilation**:
-   - Run `compile_applet` to confirm TypeScript and build clean without errors.
+   - Add the vertical 50.0 mm scale verification bar adjacent to the 100.0 mm horizontal bar in Section 0 of `renderFullA4PrintSheetSvg()`.
+   - Update layout bounds to ensure zero element overlap or margin clipping.
+2. `src/lib/pdfExport.ts`:
+   - Implement `generateVectorA4Pdf()`: Builds the entire DIN A4 marker sheet using direct `jsPDF` vector primitives (`pdf.rect()`, `pdf.line()`, `pdf.text()`) mapped in millimeter units (`unit: 'mm'`).
+   - Implement `downloadClinicalReportPdf()`: Generates a high-definition multi-page vector clinical prescription dossier for lab communication.
+   - Retain 600 DPI fallback engine for browser preview and image-based environments.
+3. `src/components/PrintableMarkersModal.tsx`:
+   - Add explicit print guidelines: `"PRINT AT ACTUAL SIZE / 100%"`, `"DISABLE FIT TO PAGE"`, `"VERIFY DUAL SCALE BARS (100mm H × 50mm V)"`.
+   - Update download buttons for HD Vector PDF, SVG, and 3D STL plates.
+4. `src/components/ClinicalReportModal.tsx`:
+   - Connect the new `downloadClinicalReportPdf` vector export button alongside existing CSV and JSON options.
+5. `test/runTests.ts`:
+   - Add Test Group 18: PDF vector generation, exact page geometry (210 × 297 mm), dual-axis scale verification bars presence, and marker dimension preservation.
