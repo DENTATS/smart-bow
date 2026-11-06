@@ -33,8 +33,9 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { RealtimeFaceTracker, FaceTrackingResult } from '../lib/faceTrackingEngine';
-import { DentitionState, CameraCalibrationSettings } from '../types/smartbow';
+import { DentitionState, CameraCalibrationSettings, MarkerPose } from '../types/smartbow';
 import { loadCameraCalibration } from '../lib/cameraCalibration';
+import { detectArucoMarkersFromCanvas } from '../lib/arucoDetector';
 import { evaluateOpticalDiagnostic, checkCaptureReadiness, OPTICAL_DIAGNOSTIC_DEFINITIONS } from '../lib/opticalDiagnostics';
 import { OpticalDiagnosticState, OpticalDiagnosticInfo } from '../types/smartbow';
 import { CameraCalibrationModal } from './CameraCalibrationModal';
@@ -83,6 +84,11 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
   const [cameraPermissionError, setCameraPermissionError] = useState<string | null>(null);
   const [fps, setFps] = useState<number>(30);
 
+  // Live Optical ArUco Markers detected directly from camera stream
+  const [liveMarkers, setLiveMarkers] = useState<MarkerPose[]>([]);
+  const liveMarkersRef = useRef<MarkerPose[]>([]);
+  const decayCountRef = useRef<number>(0);
+
   // Capture feedback states
   const [shutterTriggered, setShutterTriggered] = useState<boolean>(false);
   const [trialToast, setTrialToast] = useState<string | null>(null);
@@ -110,18 +116,22 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
 
   // Optical Diagnostics evaluation
   const telemetryAgeMs = Date.now() - lastTelemetryTimestampRef.current;
+  const hasOpticalMaxilla = liveMarkers.some(m => m.id >= 3 && m.id <= 6);
+  const hasOpticalMandible = liveMarkers.some(m => m.id >= 7 && m.id <= 10);
+  const hasAnyOpticalMarkers = liveMarkers.length > 0;
+
   const opticalDiagnostic: OpticalDiagnosticInfo = evaluateOpticalDiagnostic({
     mode,
     cameraActive,
     cameraError: cameraPermissionError,
     faceDetected: trackingData?.detected ?? false,
     faceMarkersComplete: trackingData?.detected ?? false,
-    arucoDetected: mode === 'SIMULATION' ? true : (trackingData?.detected ?? false),
-    maxillaryComplete: mode === 'SIMULATION' ? true : (trackingData?.detected ?? false),
-    mandibularComplete: mode === 'SIMULATION' ? true : (trackingData?.detected ?? false),
+    arucoDetected: mode === 'SIMULATION' ? true : (hasAnyOpticalMarkers || (trackingData?.detected ?? false)),
+    maxillaryComplete: mode === 'SIMULATION' ? true : (hasOpticalMaxilla || (trackingData?.detected ?? false)),
+    mandibularComplete: mode === 'SIMULATION' ? true : (hasOpticalMandible || (trackingData?.detected ?? false)),
     cameraCalibrated: calibrationSettings.isCalibrated,
     markerSizeVerified: true,
-    trackingStable: (trackingData?.frameQualityScore ?? 100) >= 50,
+    trackingStable: (trackingData?.frameQualityScore ?? 100) >= 35,
     telemetryAgeMs
   });
 
@@ -317,7 +327,29 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         setTrackingData(tracking);
       }
 
-      // 3. Clean Visual Overlays (Uncluttered)
+      // Optical Marker Detection on webcam feed
+      if (isWebcamReady && videoRef.current) {
+        if (frameCount % 2 === 0) {
+          const detected = detectArucoMarkersFromCanvas(videoRef.current, calibrationSettings);
+          if (detected.length > 0) {
+            liveMarkersRef.current = detected;
+            decayCountRef.current = 0;
+            if (time - lastUiUpdate > 80) {
+              setLiveMarkers(detected);
+            }
+          } else {
+            decayCountRef.current++;
+            if (decayCountRef.current > 8) {
+              liveMarkersRef.current = [];
+              if (time - lastUiUpdate > 80) {
+                setLiveMarkers([]);
+              }
+            }
+          }
+        }
+      }
+
+      // 3. Clinical Anatomical & Marker Visual Overlays
       if (tracking.detected) {
         const fbX = tracking.faceBox.x * w;
         const fbY = tracking.faceBox.y * h;
@@ -325,8 +357,8 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         const fbH = tracking.faceBox.height * h;
         const cornerLen = Math.max(14, Math.min(32, fbW * 0.18));
 
-        // Minimal, high-contrast corner brackets (no clutter)
-        ctx.strokeStyle = '#0d9488'; // Clean Teal
+        // High-contrast corner brackets (Teal)
+        ctx.strokeStyle = '#0d9488';
         ctx.lineWidth = 2.5;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
@@ -359,14 +391,86 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         ctx.lineTo(fbX + fbW, fbY + fbH - cornerLen);
         ctx.stroke();
 
-        // Subtle midline orientation axis
+        // Glabella F01 (Forehead Center)
+        if (tracking.landmarks[10]) {
+          const gX = tracking.landmarks[10].x * w;
+          const gY = tracking.landmarks[10].y * h;
+          ctx.strokeStyle = '#06b6d4';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(gX, gY, 5, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillStyle = '#06b6d4';
+          ctx.beginPath();
+          ctx.arc(gX, gY, 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.font = 'bold 9px monospace';
+          ctx.fillStyle = '#67e8f9';
+          ctx.fillText('F01 (Glabella)', gX + 8, gY + 3);
+        }
+
+        // Right Zygoma F02 & Left Zygoma F03
+        if (tracking.landmarks[234]) {
+          const zX = tracking.landmarks[234].x * w;
+          const zY = tracking.landmarks[234].y * h;
+          ctx.strokeStyle = '#06b6d4';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(zX, zY, 4.5, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.font = 'bold 9px monospace';
+          ctx.fillStyle = '#67e8f9';
+          ctx.fillText('F02 (R-Zygoma)', zX - 80, zY + 3);
+        }
+
+        if (tracking.landmarks[454]) {
+          const zX = tracking.landmarks[454].x * w;
+          const zY = tracking.landmarks[454].y * h;
+          ctx.strokeStyle = '#06b6d4';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(zX, zY, 4.5, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.font = 'bold 9px monospace';
+          ctx.fillStyle = '#67e8f9';
+          ctx.fillText('F03 (L-Zygoma)', zX + 8, zY + 3);
+        }
+
+        // Interpupillary Line & Roll Angle
+        if (tracking.landmarks[33] && tracking.landmarks[263]) {
+          const rx = tracking.landmarks[33].x * w;
+          const ry = tracking.landmarks[33].y * h;
+          const lx = tracking.landmarks[263].x * w;
+          const ly = tracking.landmarks[263].y * h;
+
+          ctx.strokeStyle = 'rgba(20, 184, 166, 0.65)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(rx, ry);
+          ctx.lineTo(lx, ly);
+          ctx.stroke();
+
+          ctx.fillStyle = '#2dd4bf';
+          ctx.beginPath();
+          ctx.arc(rx, ry, 2.5, 0, Math.PI * 2);
+          ctx.arc(lx, ly, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          const midX = (rx + lx) / 2;
+          const midY = (ry + ly) / 2;
+          ctx.font = 'bold 9px monospace';
+          ctx.fillStyle = '#2dd4bf';
+          ctx.fillText(`Interpupillary: ${Math.abs(tracking.rollDeg).toFixed(1)}°`, midX - 45, midY - 6);
+        }
+
+        // Facial Midline (Glabella -> Menton)
         if (tracking.landmarks[10] && tracking.landmarks[152]) {
           const gX = tracking.landmarks[10].x * w;
           const gY = tracking.landmarks[10].y * h;
           const mX = tracking.landmarks[152].x * w;
           const mY = tracking.landmarks[152].y * h;
 
-          ctx.strokeStyle = 'rgba(13, 148, 136, 0.45)';
+          ctx.strokeStyle = 'rgba(13, 148, 136, 0.5)';
           ctx.lineWidth = 1.5;
           ctx.setLineDash([4, 4]);
           ctx.beginPath();
@@ -376,7 +480,187 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           ctx.setLineDash([]);
         }
 
-        // Draw MediaPipe Skeletal mesh ONLY in Developer Mode
+        // Subnasale (Sn) & Menton (Me) Vertical VDO Caliper Bracket
+        const snPt = tracking.landmarks[1] || tracking.landmarks[2];
+        const mePt = tracking.landmarks[152];
+        if (snPt && mePt) {
+          const snX = snPt.x * w;
+          const snY = snPt.y * h;
+          const meX = mePt.x * w;
+          const meY = mePt.y * h;
+          const bracketX = Math.max(snX, meX) + Math.min(w * 0.16, 60);
+
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(snX + 6, snY);
+          ctx.lineTo(bracketX, snY);
+          ctx.lineTo(bracketX, meY);
+          ctx.lineTo(meX + 6, meY);
+          ctx.stroke();
+
+          ctx.fillStyle = '#f59e0b';
+          ctx.beginPath();
+          ctx.arc(bracketX, snY, 2.5, 0, Math.PI * 2);
+          ctx.arc(bracketX, meY, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          const activeVdo = mode === 'SIMULATION' ? simVdo : (tracking.softwareSelfCorrection?.invariantVdoMm || simVdo);
+          ctx.font = 'bold 10px monospace';
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillText(`VDO: ${activeVdo.toFixed(1)} mm`, bracketX + 6, (snY + meY) / 2 + 3);
+        }
+
+        // =========================================================================
+        // ARUCO FIDUCIAL MARKERS: LIVE WEBCAM & SIMULATION RENDERING
+        // =========================================================================
+        if (mode === 'WEBCAM') {
+          const activeOpticalMarkers = liveMarkersRef.current;
+          if (activeOpticalMarkers.length > 0) {
+            // Draw all real detected markers
+            for (const marker of activeOpticalMarkers) {
+              const c = marker.corners;
+              ctx.strokeStyle = '#22c55e'; // Vibrant Green
+              ctx.lineWidth = 2.5;
+              ctx.beginPath();
+              ctx.moveTo(c[0].x, c[0].y);
+              ctx.lineTo(c[1].x, c[1].y);
+              ctx.lineTo(c[2].x, c[2].y);
+              ctx.lineTo(c[3].x, c[3].y);
+              ctx.closePath();
+              ctx.stroke();
+
+              // Glowing corner circles
+              ctx.fillStyle = '#4ade80';
+              for (const pt of c) {
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+              }
+
+              // Marker Label Tag
+              const tag = (marker.id >= 3 && marker.id <= 6)
+                ? `ArUco #${marker.id} (Maxilla)`
+                : (marker.id >= 7 && marker.id <= 10)
+                ? `ArUco #${marker.id} (Mandible)`
+                : (marker.id >= 20 && marker.id <= 28)
+                ? `ArUco #${marker.id} (Calib)`
+                : `ArUco #${marker.id}`;
+
+              ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+              ctx.fillRect(c[0].x - 2, c[0].y - 17, 125, 15);
+              ctx.strokeStyle = '#22c55e';
+              ctx.lineWidth = 1;
+              ctx.strokeRect(c[0].x - 2, c[0].y - 17, 125, 15);
+              ctx.font = 'bold 9px monospace';
+              ctx.fillStyle = '#86efac';
+              ctx.fillText(tag, c[0].x + 3, c[0].y - 6);
+            }
+          } else {
+            // When physical markers not yet in frame: Show helpful oral corridor alignment zones
+            const oralX = fbX + fbW * 0.72;
+            const oralY = fbY + fbH * 0.60;
+            const zoneSize = Math.min(fbW * 0.22, 50);
+
+            ctx.strokeStyle = 'rgba(20, 184, 166, 0.4)';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([3, 3]);
+            ctx.strokeRect(oralX, oralY, zoneSize, zoneSize);
+            ctx.strokeRect(oralX, oralY + zoneSize + 8, zoneSize, zoneSize);
+            ctx.setLineDash([]);
+
+            ctx.font = 'bold 8px monospace';
+            ctx.fillStyle = 'rgba(45, 212, 191, 0.7)';
+            ctx.fillText('Maxilla (3-6)', oralX, oralY - 4);
+            ctx.fillText('Mandible (7-10)', oralX, oralY + zoneSize + 6);
+          }
+        } else {
+          // In SIMULATION Mode: Draw the dual 18x18mm ArUco carrier boards with ArUco bit patterns
+          const oralX = fbX + fbW * 0.74;
+          const oralMaxY = fbY + fbH * 0.58;
+          const boardW = Math.max(38, Math.min(fbW * 0.24, 60));
+          const boardH = boardW * 0.85;
+          const vdoOffset = (simVdo - 50) * 0.6;
+          const oralMandY = oralMaxY + boardH + Math.max(6, vdoOffset);
+
+          // Maxillary 18x18mm Board [IDs 3, 4, 5, 6]
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+          ctx.fillRect(oralX, oralMaxY, boardW, boardH);
+          ctx.strokeStyle = '#06b6d4'; // Cyan
+          ctx.lineWidth = 2;
+          ctx.strokeRect(oralX, oralMaxY, boardW, boardH);
+
+          // 4 simulated ArUco cells on Maxilla board
+          const cellW = (boardW - 8) / 2;
+          const cellH = (boardH - 8) / 2;
+          const maxIds = [3, 4, 5, 6];
+          for (let row = 0; row < 2; row++) {
+            for (let col = 0; col < 2; col++) {
+              const cx = oralX + 4 + col * cellW;
+              const cy = oralMaxY + 4 + row * cellH;
+              ctx.fillStyle = '#0f172a';
+              ctx.fillRect(cx, cy, cellW - 2, cellH - 2);
+              ctx.strokeStyle = '#22c55e';
+              ctx.lineWidth = 1;
+              ctx.strokeRect(cx, cy, cellW - 2, cellH - 2);
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(cx + 2, cy + 2, cellW - 6, cellH - 6);
+              ctx.fillStyle = '#0f172a';
+              ctx.fillRect(cx + 4, cy + 4, cellW - 10, cellH - 10);
+            }
+          }
+
+          ctx.font = 'bold 8px monospace';
+          ctx.fillStyle = '#67e8f9';
+          ctx.fillText('Maxilla (3-6)', oralX, oralMaxY - 4);
+
+          // Mandibular 18x18mm Board [IDs 7, 8, 9, 10]
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+          ctx.fillRect(oralX, oralMandY, boardW, boardH);
+          ctx.strokeStyle = '#06b6d4';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(oralX, oralMandY, boardW, boardH);
+
+          for (let row = 0; row < 2; row++) {
+            for (let col = 0; col < 2; col++) {
+              const cx = oralX + 4 + col * cellW;
+              const cy = oralMandY + 4 + row * cellH;
+              ctx.fillStyle = '#0f172a';
+              ctx.fillRect(cx, cy, cellW - 2, cellH - 2);
+              ctx.strokeStyle = '#22c55e';
+              ctx.lineWidth = 1;
+              ctx.strokeRect(cx, cy, cellW - 2, cellH - 2);
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(cx + 2, cy + 2, cellW - 6, cellH - 6);
+              ctx.fillStyle = '#0f172a';
+              ctx.fillRect(cx + 4, cy + 4, cellW - 10, cellH - 10);
+            }
+          }
+
+          ctx.font = 'bold 8px monospace';
+          ctx.fillStyle = '#67e8f9';
+          ctx.fillText('Mandible (7-10)', oralX, oralMandY + boardH + 10);
+
+          // Caliper arrow between the two boards
+          ctx.strokeStyle = '#22c55e';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(oralX + boardW + 6, oralMaxY + boardH);
+          ctx.lineTo(oralX + boardW + 6, oralMandY);
+          ctx.stroke();
+
+          ctx.fillStyle = '#4ade80';
+          ctx.beginPath();
+          ctx.arc(oralX + boardW + 6, oralMaxY + boardH, 2, 0, Math.PI * 2);
+          ctx.arc(oralX + boardW + 6, oralMandY, 2, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.font = 'bold 9px monospace';
+          ctx.fillStyle = '#4ade80';
+          ctx.fillText(`Δ ${simVdo.toFixed(1)}mm`, oralX + boardW + 10, (oralMaxY + boardH + oralMandY) / 2 + 3);
+        }
+
+        // Draw MediaPipe Skeletal mesh in Developer Mode
         if (developerMode) {
           ctx.strokeStyle = 'rgba(56, 189, 248, 0.25)';
           ctx.lineWidth = 1;
@@ -397,13 +681,19 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         const ow = Math.min(w * 0.45, 120);
         const oh = ow * 1.35;
 
-        ctx.strokeStyle = 'rgba(203, 213, 225, 0.25)';
+        ctx.strokeStyle = 'rgba(203, 213, 225, 0.3)';
         ctx.lineWidth = 2;
         ctx.setLineDash([6, 6]);
         ctx.beginPath();
         ctx.ellipse(cx, cy, ow, oh, 0, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
+
+        ctx.font = 'bold 11px system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(203, 213, 225, 0.7)';
+        ctx.textAlign = 'center';
+        ctx.fillText('Position Patient Face in Frame (35–50 cm)', cx, cy + oh + 22);
+        ctx.textAlign = 'start';
       }
 
       animationFrameId = requestAnimationFrame(render);
@@ -560,6 +850,44 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                 <Sliders className="w-4 h-4" />
               </button>
             )}
+          </div>
+        </div>
+
+        {/* Real-time Target Acquisition Strip: Face Frame · Maxilla Board · Mandible Board · VDO */}
+        <div className="absolute top-16 left-3 right-3 flex items-center justify-center pointer-events-none z-20">
+          <div className="flex items-center gap-1.5 bg-slate-950/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-800 text-[11px] font-mono shadow-lg flex-wrap justify-center">
+            {/* Face Frame Status */}
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
+              <span className={`w-2 h-2 rounded-full ${trackingData?.detected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
+              <span className="text-slate-300">Face (F01-03):</span>
+              <span className={trackingData?.detected ? 'text-emerald-400 font-bold' : 'text-amber-400'}>
+                {trackingData?.detected ? 'LOCKED' : 'ALIGNING'}
+              </span>
+            </div>
+
+            {/* Maxilla Board Status */}
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
+              <span className={`w-2 h-2 rounded-full ${mode === 'SIMULATION' || hasOpticalMaxilla ? 'bg-emerald-400' : 'bg-cyan-400'}`} />
+              <span className="text-slate-300">Maxilla (3-6):</span>
+              <span className={mode === 'SIMULATION' || hasOpticalMaxilla ? 'text-emerald-400 font-bold' : 'text-cyan-400'}>
+                {hasOpticalMaxilla ? 'LOCKED' : (mode === 'SIMULATION' ? 'ACTIVE' : 'READY')}
+              </span>
+            </div>
+
+            {/* Mandible Board Status */}
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
+              <span className={`w-2 h-2 rounded-full ${mode === 'SIMULATION' || hasOpticalMandible ? 'bg-emerald-400' : 'bg-cyan-400'}`} />
+              <span className="text-slate-300">Mandible (7-10):</span>
+              <span className={mode === 'SIMULATION' || hasOpticalMandible ? 'text-emerald-400 font-bold' : 'text-cyan-400'}>
+                {hasOpticalMandible ? 'LOCKED' : (mode === 'SIMULATION' ? 'ACTIVE' : 'READY')}
+              </span>
+            </div>
+
+            {/* Live VDO Readout */}
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 font-bold">
+              <span>VDO:</span>
+              <span>{(mode === 'SIMULATION' ? simVdo : (trackingData?.softwareSelfCorrection?.invariantVdoMm || simVdo)).toFixed(1)}mm</span>
+            </div>
           </div>
         </div>
 

@@ -5,7 +5,7 @@
  */
 
 import React from 'react';
-import { Camera, FileText, CheckCircle2, AlertCircle, ArrowRight, User, ShieldCheck, Printer, BookOpen, Compass, Layers, RotateCcw } from 'lucide-react';
+import { Camera, FileText, CheckCircle2, AlertCircle, ArrowRight, User, ShieldCheck, Printer, BookOpen, Compass, Layers, RotateCcw, Pencil } from 'lucide-react';
 import { PatientCase, DentitionState } from '../types/smartbow';
 
 interface HomeDashboardProps {
@@ -16,6 +16,7 @@ interface HomeDashboardProps {
   onOpenMarkers: () => void;
   onOpenManual: () => void;
   onOpenDatabase: () => void;
+  onEditPatient?: () => void;
 }
 
 export const HomeDashboard: React.FC<HomeDashboardProps> = ({
@@ -26,6 +27,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onOpenMarkers,
   onOpenManual,
   onOpenDatabase,
+  onEditPatient,
 }) => {
   const m = patientCase.measurements;
   const b = patientCase.biometrics;
@@ -99,12 +101,24 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               <p className="text-xs text-slate-500">ID: {patientCase.patientId} · {patientCase.age} y/o · {patientCase.gender}</p>
             </div>
           </div>
-          <button
-            onClick={onOpenDatabase}
-            className="text-xs font-semibold text-teal-700 hover:text-teal-800 underline cursor-pointer"
-          >
-            Switch Patient
-          </button>
+          <div className="flex items-center gap-2">
+            {onEditPatient && (
+              <button
+                onClick={onEditPatient}
+                className="flex items-center gap-1.5 text-xs font-semibold text-teal-700 hover:text-teal-800 bg-teal-50 hover:bg-teal-100 px-3 py-1.5 rounded-lg border border-teal-200 transition-colors cursor-pointer"
+                title="Edit Patient Details"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                <span>Edit Details</span>
+              </button>
+            )}
+            <button
+              onClick={onOpenDatabase}
+              className="text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+            >
+              Switch Patient
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">

@@ -286,9 +286,35 @@ export default function App() {
     }));
   };
 
-  const handleSaveNewPatient = (newCase: PatientCase) => {
-    setCases(prev => [newCase, ...prev]);
-    setActiveCaseId(newCase.patientId);
+  const [patientToEdit, setPatientToEdit] = useState<PatientCase | null>(null);
+
+  const handleOpenNewPatient = () => {
+    setPatientToEdit(null);
+    setIsNewPatientOpen(true);
+  };
+
+  const handleOpenEditActivePatient = () => {
+    setPatientToEdit(activeCase);
+    setIsNewPatientOpen(true);
+  };
+
+  const handleOpenEditCase = (caseToEdit: PatientCase) => {
+    setPatientToEdit(caseToEdit);
+    setIsNewPatientOpen(true);
+  };
+
+  const handleSavePatient = (savedCase: PatientCase) => {
+    setCases(prev => {
+      const existsIndex = prev.findIndex(c => c.patientId === savedCase.patientId);
+      if (existsIndex >= 0) {
+        const updated = [...prev];
+        updated[existsIndex] = savedCase;
+        return updated;
+      }
+      return [savedCase, ...prev];
+    });
+    setActiveCaseId(savedCase.patientId);
+    setPatientToEdit(null);
   };
 
   const handleDeleteCase = (patientId: string) => {
@@ -302,6 +328,7 @@ export default function App() {
   const handleResetCaseData = () => {
     setCases([DEFAULT_PATIENT_CASE]);
     setActiveCaseId(DEFAULT_PATIENT_CASE.patientId);
+    setPatientToEdit(null);
   };
 
   return (
@@ -313,6 +340,7 @@ export default function App() {
         patientId={activeCase.patientId}
         patientName={activeCase.name}
         onOpenReport={() => setIsReportOpen(true)}
+        onEditPatient={handleOpenEditActivePatient}
       />
 
       {/* Main Clinical Screen Viewport */}
@@ -326,6 +354,7 @@ export default function App() {
             onOpenMarkers={() => setIsMarkersOpen(true)}
             onOpenManual={() => setIsManualOpen(true)}
             onOpenDatabase={() => setIsDatabaseOpen(true)}
+            onEditPatient={handleOpenEditActivePatient}
           />
         )}
 
@@ -401,13 +430,18 @@ export default function App() {
         activeCaseId={activeCaseId}
         onSelectCase={setActiveCaseId}
         onDeleteCase={handleDeleteCase}
-        onOpenNewCase={() => setIsNewPatientOpen(true)}
+        onOpenNewCase={handleOpenNewPatient}
+        onEditCase={handleOpenEditCase}
       />
 
       <PatientSetupModal
         isOpen={isNewPatientOpen}
-        onClose={() => setIsNewPatientOpen(false)}
-        onSavePatient={handleSaveNewPatient}
+        onClose={() => {
+          setIsNewPatientOpen(false);
+          setPatientToEdit(null);
+        }}
+        onSavePatient={handleSavePatient}
+        patientToEdit={patientToEdit}
       />
 
       <UserManualModal

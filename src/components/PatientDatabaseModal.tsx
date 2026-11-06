@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { X, Database, User, Calendar, Trash2, Check, ArrowRight } from 'lucide-react';
+import { X, Database, User, Calendar, Trash2, Check, ArrowRight, Pencil } from 'lucide-react';
 import { PatientCase } from '../types/smartbow';
 
 interface PatientDatabaseModalProps {
@@ -15,6 +15,7 @@ interface PatientDatabaseModalProps {
   onSelectCase: (patientId: string) => void;
   onDeleteCase: (patientId: string) => void;
   onOpenNewCase: () => void;
+  onEditCase?: (patient: PatientCase) => void;
 }
 
 export const PatientDatabaseModal: React.FC<PatientDatabaseModalProps> = ({
@@ -25,6 +26,7 @@ export const PatientDatabaseModal: React.FC<PatientDatabaseModalProps> = ({
   onSelectCase,
   onDeleteCase,
   onOpenNewCase,
+  onEditCase,
 }) => {
   if (!isOpen) return null;
 
@@ -98,6 +100,20 @@ export const PatientDatabaseModal: React.FC<PatientDatabaseModalProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {onEditCase && (
+                    <button
+                      onClick={() => {
+                        onClose();
+                        onEditCase(c);
+                      }}
+                      title="Edit Patient Details"
+                      className="px-2.5 py-1.5 bg-teal-950/70 hover:bg-teal-900 border border-teal-700/60 text-teal-300 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </button>
+                  )}
+
                   {!isActive && (
                     <button
                       onClick={() => {

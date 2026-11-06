@@ -3,21 +3,25 @@
  * Dr. Deepanshu · MDS Prosthodontics · Maitri College of Dentistry
  */
 
-import React, { useState } from 'react';
-import { X, UserPlus, Check } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, UserPlus, Check, UserCheck, Pencil } from 'lucide-react';
 import { PatientCase, DentitionState, ArticulatorType } from '../types/smartbow';
 
 interface PatientSetupModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSavePatient: (newCase: PatientCase) => void;
+  patientToEdit?: PatientCase | null;
 }
 
 export const PatientSetupModal: React.FC<PatientSetupModalProps> = ({
   isOpen,
   onClose,
   onSavePatient,
+  patientToEdit,
 }) => {
+  const isEditing = !!patientToEdit;
+
   const [name, setName] = useState<string>('Ramesh Sharma');
   const [age, setAge] = useState<number>(64);
   const [gender, setGender] = useState<'MALE' | 'FEMALE' | 'OTHER'>('MALE');
@@ -25,52 +29,86 @@ export const PatientSetupModal: React.FC<PatientSetupModalProps> = ({
   const [articulator, setArticulator] = useState<ArticulatorType>('HANAU_WIDE_VUE');
   const [clinicalNotes, setClinicalNotes] = useState<string>('Bilateral edentulous ridges, Class I ridge relationship, requested balanced occlusion complete denture.');
 
+  // Sync state whenever modal opens or patientToEdit changes
+  useEffect(() => {
+    if (patientToEdit) {
+      setName(patientToEdit.name);
+      setAge(patientToEdit.age);
+      setGender(patientToEdit.gender);
+      setDentitionState(patientToEdit.dentitionState);
+      setArticulator(patientToEdit.articulator);
+      setClinicalNotes(patientToEdit.clinicalNotes || '');
+    } else {
+      setName('Ramesh Sharma');
+      setAge(64);
+      setGender('MALE');
+      setDentitionState('EDENTULOUS');
+      setArticulator('HANAU_WIDE_VUE');
+      setClinicalNotes('Bilateral edentulous ridges, Class I ridge relationship, requested balanced occlusion complete denture.');
+    }
+  }, [patientToEdit, isOpen]);
+
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const newCase: PatientCase = {
-      patientId: `SB-${Math.floor(1000 + Math.random() * 9000)}`,
-      name,
-      age,
-      gender,
-      dentitionState,
-      articulator,
-      createdAt: new Date().toISOString(),
-      dataProvenance: 'UNAVAILABLE',
-      biometrics: {
-        lowerThirdPct: 33.3,
-        bizFaceRatio: 0.70,
-        facialForm: 'ovoid',
-        interpupillaryTiltDeg: 0.0,
-        bizygomaticWidthMm: 135,
-        facialHeightMm: 190,
-        lipGapMm: 0,
-        midlineDeviationMm: 0,
-        estimatedShade: 'A2',
-        subnasaleToMentonMm: 0
-      },
-      measurements: {
-        provenance: 'UNAVAILABLE',
-        vdoMm: null,
-        freewaySpaceMm: null,
-        vdrMm: null,
-        occlusalTiltMLDeg: null,
-        occlusalTiltAPDeg: null,
-        midlineShiftMm: null,
-        crDeviationMm: null,
-        crStatus: 'UNAVAILABLE',
-        sciEstimateDeg: null,
-        bennettAngleDeg: null,
-        bennettLeftDeg: null,
-        bennettRightDeg: null
-      },
-      crRecords: [],
-      gothicArchPoints: [],
-      clinicalNotes
-    };
 
-    onSavePatient(newCase);
+    if (patientToEdit) {
+      // Preserve existing patient ID, timestamps, biometrics, measurements, and clinical records
+      const updatedCase: PatientCase = {
+        ...patientToEdit,
+        name: name.trim() || 'Unnamed Patient',
+        age: Number(age) || 60,
+        gender,
+        dentitionState,
+        articulator,
+        clinicalNotes: clinicalNotes.trim()
+      };
+      onSavePatient(updatedCase);
+    } else {
+      const newCase: PatientCase = {
+        patientId: `SB-${Math.floor(1000 + Math.random() * 9000)}`,
+        name: name.trim() || 'Unnamed Patient',
+        age: Number(age) || 60,
+        gender,
+        dentitionState,
+        articulator,
+        createdAt: new Date().toISOString(),
+        dataProvenance: 'UNAVAILABLE',
+        biometrics: {
+          lowerThirdPct: 33.3,
+          bizFaceRatio: 0.70,
+          facialForm: 'ovoid',
+          interpupillaryTiltDeg: 0.0,
+          bizygomaticWidthMm: 135,
+          facialHeightMm: 190,
+          lipGapMm: 0,
+          midlineDeviationMm: 0,
+          estimatedShade: 'A2',
+          subnasaleToMentonMm: 0
+        },
+        measurements: {
+          provenance: 'UNAVAILABLE',
+          vdoMm: null,
+          freewaySpaceMm: null,
+          vdrMm: null,
+          occlusalTiltMLDeg: null,
+          occlusalTiltAPDeg: null,
+          midlineShiftMm: null,
+          crDeviationMm: null,
+          crStatus: 'UNAVAILABLE',
+          sciEstimateDeg: null,
+          bennettAngleDeg: null,
+          bennettLeftDeg: null,
+          bennettRightDeg: null
+        },
+        crRecords: [],
+        gothicArchPoints: [],
+        clinicalNotes: clinicalNotes.trim()
+      };
+      onSavePatient(newCase);
+    }
+
     onClose();
   };
 
@@ -80,8 +118,21 @@ export const PatientSetupModal: React.FC<PatientSetupModalProps> = ({
         {/* Header */}
         <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <UserPlus className="w-5 h-5 text-cyan-400" />
-            <h3 className="text-base font-bold text-white">New Patient Registration</h3>
+            {isEditing ? (
+              <UserCheck className="w-5 h-5 text-teal-400" />
+            ) : (
+              <UserPlus className="w-5 h-5 text-cyan-400" />
+            )}
+            <div>
+              <h3 className="text-base font-bold text-white">
+                {isEditing ? 'Edit Patient Case Details' : 'New Patient Registration'}
+              </h3>
+              {isEditing && (
+                <span className="text-[11px] font-mono text-cyan-400">
+                  Case ID: {patientToEdit.patientId} · Preserving Measurements
+                </span>
+              )}
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -185,7 +236,7 @@ export const PatientSetupModal: React.FC<PatientSetupModalProps> = ({
               className="px-5 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-lg shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
             >
               <Check className="w-4 h-4" />
-              <span>Initialize Clinical Case</span>
+              <span>{isEditing ? 'Save Patient Changes' : 'Initialize Clinical Case'}</span>
             </button>
           </div>
         </form>

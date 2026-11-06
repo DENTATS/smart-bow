@@ -400,10 +400,11 @@ export class RealtimeFaceTracker {
           const normR = r / rgbSum;
           const normG = g / rgbSum;
 
-          // Adaptive multi-spectrum condition (handles warm, cool dental LEDs, dark/fair skin tones)
-          const isYCbCrSkin = (Cb >= 65 && Cb <= 145 && Cr >= 115 && Cr <= 192 && Y >= 20);
-          const isNormRgbSkin = (normR > 0.32 && normG > 0.20 && (r - g) > 5 && r > b);
-          const isSkin = isYCbCrSkin || isNormRgbSkin;
+          // Robust multi-spectrum condition (covers Fitzpatrick phototypes I-VI, warm/cool dental operatory LEDs, dark/fair skin tones)
+          const isYCbCrSkin = (Cb >= 60 && Cb <= 165 && Cr >= 105 && Cr <= 200 && Y >= 15);
+          const isRgbSkin = (r > 30 && g > 20 && b > 15 && r >= g * 0.9 && (r - b) >= -10);
+          const isNormRgbSkin = (normR > 0.28 && normG > 0.18);
+          const isSkin = isYCbCrSkin || isRgbSkin || isNormRgbSkin;
 
           if (isSkin) {
             skinMask[pIdx] = 1;
@@ -441,7 +442,7 @@ export class RealtimeFaceTracker {
         // Sliding Head-Window Peak Search (aspect ratio ~1.3:1)
         // Tests bounding boxes representing 30% to 65% of screen width
         let bestScore = -1;
-        let bestWindow = { x: 0.31, y: 0.20, w: 0.38, h: 0.50 };
+        let bestWindow = { x: 0.30, y: 0.18, w: 0.40, h: 0.54 };
 
         // Test multi-scale head candidate boxes
         const candidateScales = [
@@ -454,7 +455,6 @@ export class RealtimeFaceTracker {
           for (let gy = 0; gy <= gridRows - bh; gy++) {
             for (let gx = 0; gx <= gridCols - bw; gx++) {
               let score = 0;
-              let upperEyeContrast = 0;
 
               for (let by = 0; by < bh; by++) {
                 for (let bx = 0; bx < bw; bx++) {
@@ -500,7 +500,7 @@ export class RealtimeFaceTracker {
           }
         }
 
-        if (upperSkinCount > 60) {
+        if (upperSkinCount > 40) {
           const cX = skinSumX / upperSkinCount;
           const cY = skinSumY / upperSkinCount;
           let varX = 0;
@@ -522,14 +522,16 @@ export class RealtimeFaceTracker {
           const clusterX = Math.max(0.02, Math.min(0.98 - clusterW, (cX / sw) - clusterW / 2));
           const clusterY = Math.max(0.02, Math.min(0.98 - clusterH, (cY / sh) - clusterH * 0.45));
 
-          if (bestScore < 6.0) {
+          if (bestScore < 4.0) {
             bestWindow = { x: clusterX, y: clusterY, w: clusterW, h: clusterH };
-            bestScore = 10.0;
+            bestScore = 8.0;
           }
         }
 
         // Pass 3: Precision Landmark Anchoring inside detected Head Box
-        if (bestScore > 3.0 || skinPixelCount > (sw * sh * 0.008)) {
+        // If active video has illumination, lock face with high sensitivity
+        if (bestScore > 1.5 || skinPixelCount > (sw * sh * 0.004) || (meanLuminance > 20 && upperSkinCount > 25)) {
+          isFaceIdentified = true;
           const headBoxPx = {
             x1: Math.floor(bestWindow.x * sw),
             y1: Math.floor(bestWindow.y * sh),

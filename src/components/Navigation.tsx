@@ -15,6 +15,7 @@ interface NavigationProps {
   patientId: string;
   patientName: string;
   onOpenReport: () => void;
+  onEditPatient?: () => void;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
@@ -23,6 +24,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   patientId,
   patientName,
   onOpenReport,
+  onEditPatient,
 }) => {
   const navItems: { id: MainNavTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'home', label: 'Home', icon: Home },
@@ -79,10 +81,23 @@ export const Navigation: React.FC<NavigationProps> = ({
 
         {/* Zone 3: 1 Primary CTA Button */}
         <div className="flex items-center gap-3 shrink-0">
-          <div className="text-right text-xs">
-            <span className="text-slate-900 font-semibold block">{patientName}</span>
-            <span className="text-slate-500 font-mono text-[11px]">{patientId}</span>
-          </div>
+          {onEditPatient ? (
+            <button
+              onClick={onEditPatient}
+              title="Click to Edit Patient Details"
+              className="text-right text-xs p-1 rounded-md hover:bg-slate-100 transition-colors cursor-pointer group"
+            >
+              <span className="text-slate-900 font-semibold block group-hover:text-teal-700 transition-colors">
+                {patientName} ✎
+              </span>
+              <span className="text-slate-500 font-mono text-[11px] block">{patientId}</span>
+            </button>
+          ) : (
+            <div className="text-right text-xs">
+              <span className="text-slate-900 font-semibold block">{patientName}</span>
+              <span className="text-slate-500 font-mono text-[11px]">{patientId}</span>
+            </div>
+          )}
 
           <button
             onClick={onOpenReport}
@@ -109,9 +124,19 @@ export const Navigation: React.FC<NavigationProps> = ({
         </button>
 
         <div className="flex items-center gap-2">
-          <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-            {patientId}
-          </span>
+          {onEditPatient ? (
+            <button
+              onClick={onEditPatient}
+              title="Edit Patient Details"
+              className="text-xs font-mono text-slate-700 bg-slate-100 hover:bg-teal-50 hover:text-teal-800 border border-slate-200 px-2 py-0.5 rounded cursor-pointer transition-colors"
+            >
+              {patientId} ✎
+            </button>
+          ) : (
+            <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+              {patientId}
+            </span>
+          )}
           <button
             onClick={onOpenReport}
             className="p-2 text-slate-600 hover:text-teal-700 rounded-lg hover:bg-slate-100 transition-colors"
