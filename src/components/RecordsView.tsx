@@ -1,19 +1,41 @@
 /**
- * SmartBow AI - Unified Clinical Records Workspace
- * Clean segmented access to VDO, CR, Gothic Arch, 3D Articulator, and Facial Analysis.
+ * SmartBow AI - Module 5 & 6: Unified Clinical Records & Jaw Relation Workspace
+ * Clean segmented access to Maxilla, Mandible, VDO, CR, Gothic Arch, 3D Articulator,
+ * Consolidated Measurement Telemetry Dashboard, and Facial Analysis.
  * Dr. Deepanshu · MDS Prosthodontics · Maitri College of Dentistry
  */
 
 import React, { useState } from 'react';
-import { Layers, CheckCircle2, Compass, Box, Smile, ArrowLeft, Camera, FileText } from 'lucide-react';
+import { 
+  Layers, 
+  CheckCircle2, 
+  Compass, 
+  Box, 
+  Smile, 
+  ArrowLeft, 
+  Camera, 
+  FileText, 
+  RotateCcw, 
+  Activity 
+} from 'lucide-react';
 import { VdoDashboard } from './VdoDashboard';
 import { CrRecorder } from './CrRecorder';
 import { GothicArchTracer } from './GothicArchTracer';
 import { VirtualArticulator3D } from './VirtualArticulator3D';
 import { FacialAnalysisView } from './FacialAnalysisView';
+import { MeasurementDashboard } from './MeasurementDashboard';
+import { MaxillaMandibleWorkflow } from './MaxillaMandibleWorkflow';
 import { PatientCase, GothicArchPoint } from '../types/smartbow';
 
-export type RecordsSubtab = 'vdo' | 'cr' | 'gothic' | 'articulator' | 'facial';
+export type RecordsSubtab = 
+  | 'maxilla' 
+  | 'mandible' 
+  | 'vdo' 
+  | 'cr' 
+  | 'gothic' 
+  | 'articulator' 
+  | 'measurements' 
+  | 'facial';
 
 interface RecordsViewProps {
   initialSubtab?: RecordsSubtab;
@@ -21,6 +43,9 @@ interface RecordsViewProps {
   vdrMm: number;
   onUpdateVdr: (vdr: number) => void;
   onUpdateVdo: (vdo: number) => void;
+  onUpdateTiltML?: (tilt: number) => void;
+  onUpdateTiltAP?: (tilt: number) => void;
+  onUpdateMidline?: (shift: number) => void;
   onRecordCrTrial: () => void;
   onClearCrRecords: () => void;
   onAddGothicPoint: (pt: GothicArchPoint) => void;
@@ -28,8 +53,9 @@ interface RecordsViewProps {
   onSaveGothicParameters: (sci: number | null, bennettL: number | null, bennettR: number | null) => void;
   onSelectShade: (shade: string) => void;
   onUpdateArticulatorType: (type: any) => void;
-  onNavigateToTab: (tab: 'home' | 'scanner' | 'records' | 'settings') => void;
+  onNavigateToTab: (tab: 'home' | 'scanner' | 'records' | 'settings' | 'assessment') => void;
   onOpenReport: () => void;
+  onEditPatient?: () => void;
 }
 
 export const RecordsView: React.FC<RecordsViewProps> = ({
@@ -38,6 +64,9 @@ export const RecordsView: React.FC<RecordsViewProps> = ({
   vdrMm,
   onUpdateVdr,
   onUpdateVdo,
+  onUpdateTiltML = () => {},
+  onUpdateTiltAP = () => {},
+  onUpdateMidline = () => {},
   onRecordCrTrial,
   onClearCrRecords,
   onAddGothicPoint,
@@ -47,13 +76,17 @@ export const RecordsView: React.FC<RecordsViewProps> = ({
   onUpdateArticulatorType,
   onNavigateToTab,
   onOpenReport,
+  onEditPatient,
 }) => {
   const [activeSubtab, setActiveSubtab] = useState<RecordsSubtab>(initialSubtab);
 
   const subtabs: { id: RecordsSubtab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+    { id: 'maxilla', label: 'Maxilla Plane', icon: RotateCcw },
+    { id: 'mandible', label: 'Mandible Relation', icon: Layers },
     { id: 'vdo', label: 'VDO Checkpoints', icon: Layers },
     { id: 'cr', label: 'Centric Relation', icon: CheckCircle2 },
     { id: 'gothic', label: 'Gothic Arch', icon: Compass },
+    { id: 'measurements', label: 'Telemetry Matrix', icon: Activity },
     { id: 'articulator', label: '3D Articulator', icon: Box },
     { id: 'facial', label: 'Facial Form', icon: Smile },
   ];
@@ -66,11 +99,11 @@ export const RecordsView: React.FC<RecordsViewProps> = ({
           <button
             onClick={() => onNavigateToTab('home')}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
-            title="Return to Home"
+            title="Return to Home Dashboard"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
-          <span className="text-xs font-bold text-slate-300 hidden sm:inline">Records:</span>
+          <span className="text-xs font-bold text-slate-300 hidden sm:inline">Jaw Relation:</span>
         </div>
 
         {/* Clean Segmented Controls */}
@@ -95,7 +128,7 @@ export const RecordsView: React.FC<RecordsViewProps> = ({
           })}
         </div>
 
-        {/* Quick Scanner Action */}
+        {/* Quick Actions */}
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => onNavigateToTab('scanner')}
@@ -117,6 +150,30 @@ export const RecordsView: React.FC<RecordsViewProps> = ({
 
       {/* Main Records Content Area */}
       <div className="flex-1 overflow-y-auto">
+        {activeSubtab === 'maxilla' && (
+          <MaxillaMandibleWorkflow
+            patientCase={patientCase}
+            stage="MAXILLA"
+            onUpdateTiltML={onUpdateTiltML}
+            onUpdateTiltAP={onUpdateTiltAP}
+            onUpdateMidline={onUpdateMidline}
+            onNavigateToTab={onNavigateToTab}
+            onNavigateToSubtab={(sub) => setActiveSubtab(sub as RecordsSubtab)}
+          />
+        )}
+
+        {activeSubtab === 'mandible' && (
+          <MaxillaMandibleWorkflow
+            patientCase={patientCase}
+            stage="MANDIBLE"
+            onUpdateTiltML={onUpdateTiltML}
+            onUpdateTiltAP={onUpdateTiltAP}
+            onUpdateMidline={onUpdateMidline}
+            onNavigateToTab={onNavigateToTab}
+            onNavigateToSubtab={(sub) => setActiveSubtab(sub as RecordsSubtab)}
+          />
+        )}
+
         {activeSubtab === 'vdo' && (
           <VdoDashboard
             vdoMm={patientCase.measurements.vdoMm}
@@ -162,6 +219,15 @@ export const RecordsView: React.FC<RecordsViewProps> = ({
           />
         )}
 
+        {activeSubtab === 'measurements' && (
+          <MeasurementDashboard
+            patientCase={patientCase}
+            isCalibrated={patientCase.calibrationStatus === 'CALIBRATED'}
+            onOpenReport={onOpenReport}
+            onNavigateToSubtab={(sub) => setActiveSubtab(sub as RecordsSubtab)}
+          />
+        )}
+
         {activeSubtab === 'articulator' && (
           <VirtualArticulator3D
             patientCase={patientCase}
@@ -171,10 +237,12 @@ export const RecordsView: React.FC<RecordsViewProps> = ({
 
         {activeSubtab === 'facial' && (
           <FacialAnalysisView
+            patientCase={patientCase}
             biometrics={patientCase.biometrics}
             vdoMm={patientCase.measurements.vdoMm}
             crDeviationMm={patientCase.measurements.crDeviationMm}
             onSelectShade={onSelectShade}
+            onEditPatient={onEditPatient}
           />
         )}
       </div>

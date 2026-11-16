@@ -8,8 +8,77 @@
  * - CR status requires >= 2 real recordings; never defaults to ACCEPTED.
  */
 
-import { Point3D, FacialBiometrics, GothicArchPoint, DataProvenance, ProvenanceValue } from '../types/smartbow';
+import { Point3D, FacialBiometrics, GothicArchPoint, DataProvenance, ProvenanceValue, MeasurementSourceStatus } from '../types/smartbow';
 import { Matrix4, vecDistance, vecDot } from './patientFrame';
+
+export function resolveMeasurementSourceStatus(
+  val: number | string | null | undefined,
+  provenance: DataProvenance = 'UNAVAILABLE',
+  isCalibrated: boolean = false,
+  isLiveCamera: boolean = false
+): MeasurementSourceStatus {
+  if (val === null || val === undefined || provenance === 'UNAVAILABLE') {
+    return 'UNAVAILABLE';
+  }
+  if (provenance === 'SIMULATED') {
+    return 'SIMULATED_DEMO';
+  }
+  if (isLiveCamera) {
+    if (isCalibrated) {
+      return 'CALIBRATED_ENGINEERING';
+    }
+    return 'LIVE_UNCALIBRATED';
+  }
+  return 'LIVE_MEASURED';
+}
+
+export interface MeasurementStatusBadgeInfo {
+  status: MeasurementSourceStatus;
+  label: string;
+  badgeClass: string;
+  description: string;
+}
+
+export function getMeasurementStatusBadgeInfo(status: MeasurementSourceStatus): MeasurementStatusBadgeInfo {
+  switch (status) {
+    case 'CALIBRATED_ENGINEERING':
+      return {
+        status,
+        label: 'CALIBRATED ENGINEERING MEASUREMENT',
+        badgeClass: 'bg-teal-500/10 text-teal-400 border-teal-500/30',
+        description: 'Captured via calibrated camera intrinsics and verified physical ArUco fiducials.'
+      };
+    case 'LIVE_MEASURED':
+      return {
+        status,
+        label: 'LIVE MEASURED',
+        badgeClass: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+        description: 'Physically captured measurement from active optical session.'
+      };
+    case 'LIVE_UNCALIBRATED':
+      return {
+        status,
+        label: 'LIVE UNCALIBRATED',
+        badgeClass: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+        description: 'Live optical measurement with default uncalibrated camera sensor profile.'
+      };
+    case 'SIMULATED_DEMO':
+      return {
+        status,
+        label: 'SIMULATED DEMONSTRATION',
+        badgeClass: 'bg-orange-500/10 text-orange-400 border-orange-500/30',
+        description: 'Synthetic engineering simulation for software demonstration and verification.'
+      };
+    case 'UNAVAILABLE':
+    default:
+      return {
+        status: 'UNAVAILABLE',
+        label: 'UNAVAILABLE',
+        badgeClass: 'bg-slate-800 text-slate-400 border-slate-700',
+        description: 'Measurement not physically captured or prerequisites incomplete.'
+      };
+  }
+}
 
 /**
  * Compute Vertical Dimension of Occlusion (VDO) in millimeters.

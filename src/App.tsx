@@ -17,6 +17,8 @@ import { PatientDatabaseModal } from './components/PatientDatabaseModal';
 import { PatientSetupModal } from './components/PatientSetupModal';
 import { UserManualModal } from './components/UserManualModal';
 import { CameraCalibrationModal } from './components/CameraCalibrationModal';
+import { PresentationTourModal } from './components/PresentationTourModal';
+import { FacialAnalysisView } from './components/FacialAnalysisView';
 import { PatientCase, CrRecord, GothicArchPoint, DentitionState, CameraCalibrationSettings } from './types/smartbow';
 import { computeCrDeviation } from './lib/clinicalMath';
 import { loadCameraCalibration } from './lib/cameraCalibration';
@@ -120,6 +122,7 @@ export default function App() {
   const [isManualOpen, setIsManualOpen] = useState<boolean>(false);
   const [isCalibrationOpen, setIsCalibrationOpen] = useState<boolean>(false);
   const [isValidationOpen, setIsValidationOpen] = useState<boolean>(false);
+  const [isTourOpen, setIsTourOpen] = useState<boolean>(false);
 
   // Calibration settings
   const [calibrationSettings, setCalibrationSettings] = useState(loadCameraCalibration);
@@ -140,6 +143,21 @@ export default function App() {
     setCases(prevCases =>
       prevCases.map(c => (c.patientId === activeCase.patientId ? updater(c) : c))
     );
+  };
+
+  // Toggle between Simulated Demonstration and Live Measured Data
+  const handleToggleDemoMode = () => {
+    updateActiveCase(c => {
+      const newProv = c.dataProvenance === 'SIMULATED' ? 'MEASURED' : 'SIMULATED';
+      return {
+        ...c,
+        dataProvenance: newProv,
+        measurements: {
+          ...c.measurements,
+          provenance: newProv
+        }
+      };
+    });
   };
 
   // Measurement updates
@@ -308,13 +326,48 @@ export default function App() {
       const existsIndex = prev.findIndex(c => c.patientId === savedCase.patientId);
       if (existsIndex >= 0) {
         const updated = [...prev];
-        updated[existsIndex] = savedCase;
+        // Strictly update only the matched patient case, preserving identity and updating timestamps
+        updated[existsIndex] = {
+          ...updated[existsIndex],
+          ...savedCase,
+          updatedAt: new Date().toISOString()
+        };
         return updated;
       }
       return [savedCase, ...prev];
     });
     setActiveCaseId(savedCase.patientId);
     setPatientToEdit(null);
+  };
+
+  // Start a fresh clinical examination session for the active patient
+  const handleStartNewExamination = () => {
+    updateActiveCase(c => ({
+      ...c,
+      updatedAt: new Date().toISOString(),
+      workflowStage: 'ASSESSMENT',
+      dataProvenance: 'UNAVAILABLE',
+      measurements: {
+        provenance: 'UNAVAILABLE',
+        sourceStatus: 'UNAVAILABLE',
+        vdoMm: null,
+        freewaySpaceMm: null,
+        vdrMm: null,
+        occlusalTiltMLDeg: null,
+        occlusalTiltAPDeg: null,
+        midlineShiftMm: null,
+        crDeviationMm: null,
+        crStatus: 'UNAVAILABLE',
+        sciEstimateDeg: null,
+        bennettAngleDeg: null,
+        bennettLeftDeg: null,
+        bennettRightDeg: null,
+        timestamps: {}
+      },
+      crRecords: [],
+      gothicArchPoints: []
+    }));
+    setActiveTab('scanner');
   };
 
   const handleDeleteCase = (patientId: string) => {
@@ -341,6 +394,9 @@ export default function App() {
         patientName={activeCase.name}
         onOpenReport={() => setIsReportOpen(true)}
         onEditPatient={handleOpenEditActivePatient}
+        isSimulated={activeCase.dataProvenance === 'SIMULATED'}
+        onLaunchTour={() => setIsTourOpen(true)}
+        onToggleDemoMode={handleToggleDemoMode}
       />
 
       {/* Main Clinical Screen Viewport */}
@@ -348,6 +404,9 @@ export default function App() {
         {activeTab === 'home' && (
           <HomeDashboard
             patientCase={activeCase}
+            allCases={cases}
+            onSelectCase={setActiveCaseId}
+            onNewPatient={handleOpenNewPatient}
             onNavigateToTab={setActiveTab}
             onSelectRecordsSubtab={(sub) => setRecordsSubtab(sub)}
             onOpenReport={() => setIsReportOpen(true)}
@@ -355,6 +414,21 @@ export default function App() {
             onOpenManual={() => setIsManualOpen(true)}
             onOpenDatabase={() => setIsDatabaseOpen(true)}
             onEditPatient={handleOpenEditActivePatient}
+            onStartNewExamination={handleStartNewExamination}
+            onLaunchTour={() => setIsTourOpen(true)}
+            onToggleDemoMode={handleToggleDemoMode}
+          />
+        )}
+
+        {activeTab === 'assessment' && (
+          <FacialAnalysisView
+            patientCase={activeCase}
+            biometrics={activeCase.biometrics}
+            vdoMm={activeCase.measurements.vdoMm}
+            crDeviationMm={activeCase.measurements.crDeviationMm}
+            onSelectShade={handleSelectShade}
+            onEditPatient={handleOpenEditActivePatient}
+            onUpdateCase={(u) => updateActiveCase(c => ({ ...c, ...u }))}
           />
         )}
 
@@ -383,6 +457,9 @@ export default function App() {
             vdrMm={vdrMm}
             onUpdateVdr={setVdrMm}
             onUpdateVdo={handleUpdateVdo}
+            onUpdateTiltML={handleUpdateTiltML}
+            onUpdateTiltAP={handleUpdateTiltAP}
+            onUpdateMidline={handleUpdateMidline}
             onRecordCrTrial={handleAddCrRecord}
             onClearCrRecords={handleClearCrRecords}
             onAddGothicPoint={handleAddGothicPoint}
@@ -394,6 +471,7 @@ export default function App() {
             }}
             onNavigateToTab={setActiveTab}
             onOpenReport={() => setIsReportOpen(true)}
+            onEditPatient={handleOpenEditActivePatient}
           />
         )}
 
@@ -442,6 +520,7 @@ export default function App() {
         }}
         onSavePatient={handleSavePatient}
         patientToEdit={patientToEdit}
+        existingPatientIds={cases.map(c => c.patientId)}
       />
 
       <UserManualModal
@@ -486,6 +565,18 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* 4-Day Presentation Tour Modal */}
+      <PresentationTourModal
+        isOpen={isTourOpen}
+        onClose={() => setIsTourOpen(false)}
+        onNavigateToTab={setActiveTab}
+        onSelectRecordsSubtab={(sub) => setRecordsSubtab(sub)}
+        onOpenReport={() => setIsReportOpen(true)}
+        onOpenMarkers={() => setIsMarkersOpen(true)}
+        isSimulatedMode={activeCase.dataProvenance === 'SIMULATED'}
+        onToggleSimulatedMode={handleToggleDemoMode}
+      />
     </div>
   );
 }

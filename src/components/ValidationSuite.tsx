@@ -70,15 +70,15 @@ export const ROADMAP_MILESTONES: RoadmapMilestone[] = [
     id: 'M1',
     milestoneNumber: 1,
     title: 'Milestone 1: Real Marker Detection Pipeline',
-    shortSummary: 'OpenCV DICT_4X4_50 dictionary verification, sub-pixel quad detection, and live camera corner extraction.',
-    status: 'IN PROGRESS',
-    currentLimitation: 'Live web scanner currently utilizes simulated landmark tracking; real-time video corner extraction via WebAssembly OpenCV is in active integration.',
+    shortSummary: 'OpenCV DICT_4X4_50 dictionary verification, perspective homography quad decoding, and live camera overlay mapping.',
+    status: 'TESTING',
+    currentLimitation: 'Client-side pure-TypeScript perspective-invariant ArUco DICT_4X4_50 detector is implemented and passes synthetic rasterized ImageData tests, but end-to-end physical webcam testing with printed A4 cards under clinical operatory lighting still awaits manual device verification.',
     whyItMatters: 'Physical jaw tracking requires reliable detection of printed fiducial markers under varying dental clinic operatory lighting, camera distances, and angles.',
-    plannedSolution: 'Implement client-side WebAssembly OpenCV ArUco detector using the OpenCV DICT_4X4_50 dictionary; apply sub-pixel corner refinement (cornerSubPix), contour polygon fitting, and quad verification.',
-    testingMethod: 'Verify decoding against registered 6x6 bitmatrices across 0°, 90°, 180°, and 270° rotations, independently generated OpenCV ground-truth patterns, partial occlusions, and 1:1 printed sheets.',
-    acceptanceCriteria: 'Real printed markers (18x18mm plates, 14x14mm facial, 12x12mm calibration) are detected and correctly identified through the camera pipeline. Synthetic marker poses cannot pass as real detections.',
-    dependencies: 'Milestone 0 (Safe Baseline); WebAssembly OpenCV binary optimization for mobile browsers.',
-    evidenceResult: 'DICT_4X4_50 digital bitmatrix decoder and independent OpenCV reference tests pass (Test Groups 10, 11, 14).'
+    plannedSolution: 'Adaptive integral thresholding, Moore-Neighbor contour extraction, 8-DOF planar homography warping, and canonical OpenCV DICT_4X4_50 decoding with viewport cover/mirror coordinate mapping and a live Marker Test Mode.',
+    testingMethod: 'Verify decoding against canonical OpenCV DICT_4X4_50 bitmatrices across rotations, perspective tilt, multi-marker arrays, foreign DICT_6X6 rejection, and 1:1 printed PDF cards in live camera Marker Test Mode.',
+    acceptanceCriteria: 'Real printed markers (18x18mm plates, 14x14mm facial, 12x12mm calibration) are detected and correctly identified through the live camera pipeline with zero simulated fallback.',
+    dependencies: 'Milestone 0 (Safe Baseline); physical smartphone/webcam operatory test with 100%-scale printed DICT_4X4_50 sheet.',
+    evidenceResult: 'Canonical OpenCV DICT_4X4_50 (50 markers), pure-TS perspective raster CV pipeline, and 9-condition diagnostics pass automated tests (Test Groups 10, 11, 14, 22); physical camera verification pending.'
   },
   {
     id: 'M2',

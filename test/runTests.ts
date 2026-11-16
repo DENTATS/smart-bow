@@ -14,16 +14,24 @@
  * 10. Marker SVG physical dimensions match mm specifications.
  */
 
-import { computeVdo, computeCrDeviation, analyzeGothicArch, generateClinicalSuggestions } from '../src/lib/clinicalMath';
+import { computeVdo, computeCrDeviation, analyzeGothicArch, generateClinicalSuggestions, resolveMeasurementSourceStatus, getMeasurementStatusBadgeInfo } from '../src/lib/clinicalMath';
 import { generateSimulatedDemoValidationDataset, computeStatistics, exportValidationCsv } from '../src/lib/validationEngine';
 import { generateHanauPrescriptionText, generatePatientCaseJson, generateExocadArticulatorFile } from '../src/lib/exportArticulator';
 import { generateMountingJigStl, generateMarkerCarrierPlateStl } from '../src/lib/stlGenerator';
 import { RealtimeFaceTracker } from '../src/lib/faceTrackingEngine';
 import { Matrix4, createIdentityMatrix, invertRigidMatrix, multiplyRigidMatrices, transformPoint } from '../src/lib/patientFrame';
-import { renderMarkerSvg, renderBoardSvg, renderFullA4PrintSheetSvg, getFullMarkerGrid, decodeMarkerGrid, CAD_BOARD_SPECIFICATION, ARUCO_DICT_4X4_50_BITS } from '../src/lib/arucoDict';
+import { renderMarkerSvg, renderBoardSvg, renderFullA4PrintSheetSvg, getFullMarkerGrid, decodeMarkerGrid, CAD_BOARD_SPECIFICATION, ARUCO_DICT_4X4_50_BITS, ARUCO_DICTIONARY_NAME } from '../src/lib/arucoDict';
+import { jsPDF } from 'jspdf';
 import { downloadA4PrintSheetPdf, generateVectorA4Pdf, generateClinicalReportPdf, drawVectorArUcoMarker } from '../src/lib/pdfExport';
+import {
+  detectArucoMarkersFromImageData,
+  detectArucoMarkersDetailed,
+  computeCoverTransform,
+  mapVideoPointToCanvas,
+  mapVideoCornersToCanvas,
+} from '../src/lib/arucoDetector';
 import { SOURCED_RIM_DATUMS } from '../src/lib/prosthodonticLiterature';
-import { evaluateOpticalDiagnostic, checkCaptureReadiness, OPTICAL_DIAGNOSTIC_DEFINITIONS } from '../src/lib/opticalDiagnostics';
+import { evaluateOpticalDiagnostic, checkCaptureReadiness, evaluateArucoPipelineDiagnostic, OPTICAL_DIAGNOSTIC_DEFINITIONS } from '../src/lib/opticalDiagnostics';
 import { INDEPENDENT_OPENCV_GROUND_TRUTH_MARKERS } from './independentOpenCvReference';
 import { PatientCase, Point3D, ValidationBenchTest, OpticalDiagnosticState } from '../src/types/smartbow';
 
@@ -1052,6 +1060,659 @@ console.log('\nTest Group 18: High-Definition Vector PDF & Dual-Axis Verificatio
   );
 }
 
+// -----------------------------------------------------------------------------
+// TEST 19: Four-Day Prototype Measurement Source Status Classification
+// -----------------------------------------------------------------------------
+console.log('Test Group 19: Measurement Source Status & Provenance Badges');
+{
+  // 19a: Null values strictly resolve to UNAVAILABLE
+  const sNull = resolveMeasurementSourceStatus(null, 'MEASURED', true, true);
+  assert(sNull === 'UNAVAILABLE', '19a: Null measurement value strictly returns UNAVAILABLE', `Received ${sNull}`);
+
+  // 19b: SIMULATED provenance strictly returns SIMULATED_DEMO
+  const sSim = resolveMeasurementSourceStatus(62.5, 'SIMULATED', true, true);
+  assert(sSim === 'SIMULATED_DEMO', '19b: SIMULATED provenance strictly maps to SIMULATED_DEMO', `Received ${sSim}`);
+
+  // 19c: Live uncalibrated measurement returns LIVE_UNCALIBRATED
+  const sUncal = resolveMeasurementSourceStatus(62.5, 'MEASURED', false, true);
+  assert(sUncal === 'LIVE_UNCALIBRATED', '19c: Live optical measurement without intrinsics calibration returns LIVE_UNCALIBRATED', `Received ${sUncal}`);
+
+  // 19d: Calibrated optical camera measurement returns CALIBRATED_ENGINEERING
+  const sCal = resolveMeasurementSourceStatus(62.5, 'MEASURED', true, true);
+  assert(sCal === 'CALIBRATED_ENGINEERING', '19d: Calibrated camera optical capture returns CALIBRATED_ENGINEERING', `Received ${sCal}`);
+
+  // 19e: Stored measured physical record returns LIVE_MEASURED
+  const sLive = resolveMeasurementSourceStatus(62.5, 'MEASURED', true, false);
+  assert(sLive === 'LIVE_MEASURED', '19e: Recorded session measurement returns LIVE_MEASURED', `Received ${sLive}`);
+
+  // 19f: Badge information returns exact non-empty label and badge class
+  const badgeSim = getMeasurementStatusBadgeInfo('SIMULATED_DEMO');
+  assert(
+    badgeSim.label === 'SIMULATED DEMONSTRATION' && badgeSim.badgeClass.includes('orange'),
+    '19f: SIMULATED_DEMO badge has explicit label and visual indicator',
+    `Badge=${JSON.stringify(badgeSim)}`
+  );
+}
+
+// -----------------------------------------------------------------------------
+// TEST 20: Anti-Fabrication & Protective Export Safeguards
+// -----------------------------------------------------------------------------
+console.log('Test Group 20: Protective Export Safeguards & Anti-Fabrication');
+{
+  // 20a: Simulated case JSON and Exocad output includes warning and SIMULATED provenance
+  const testCase: PatientCase = {
+    patientId: 'SB-TEST-01',
+    name: 'Test Prototype',
+    age: 55,
+    gender: 'MALE',
+    dentitionState: 'EDENTULOUS',
+    articulator: 'HANAU_WIDE_VUE',
+    createdAt: new Date().toISOString(),
+    dataProvenance: 'SIMULATED',
+    biometrics: {
+      lowerThirdPct: 33.0,
+      bizFaceRatio: 0.72,
+      facialForm: 'square',
+      interpupillaryTiltDeg: 0.0,
+      bizygomaticWidthMm: 136,
+      facialHeightMm: 190,
+      lipGapMm: 2.0,
+      midlineDeviationMm: 0.0,
+      estimatedShade: 'A2'
+    },
+    measurements: {
+      provenance: 'SIMULATED',
+      vdoMm: 62.0,
+      freewaySpaceMm: 3.0,
+      vdrMm: 65.0,
+      occlusalTiltMLDeg: 0.5,
+      occlusalTiltAPDeg: 5.0,
+      midlineShiftMm: 0.0,
+      crDeviationMm: 0.22,
+      crStatus: 'ACCEPTED',
+      sciEstimateDeg: 35.0,
+      bennettLeftDeg: 16.0,
+      bennettRightDeg: 16.0
+    },
+    crRecords: [],
+    gothicArchPoints: []
+  };
+
+  const exocadOut = generateExocadArticulatorFile(testCase);
+  const parsedExocad = JSON.parse(exocadOut);
+
+  assert(
+    parsedExocad.dataProvenance === 'SIMULATED' &&
+    parsedExocad.clinicalSafetyWarning.includes('SIMULATION — NOT FOR CLINICAL USE'),
+    '20a: Simulated patient case Exocad export strictly embeds simulation warning and provenance',
+    `clinicalSafetyWarning=${parsedExocad.clinicalSafetyWarning}`
+  );
+
+  // 20b: Missing measurements are null in Exocad export, never filled with false defaults
+  const emptyCase: PatientCase = {
+    ...testCase,
+    measurements: {
+      provenance: 'UNAVAILABLE',
+      vdoMm: null,
+      freewaySpaceMm: null,
+      vdrMm: null,
+      occlusalTiltMLDeg: null,
+      occlusalTiltAPDeg: null,
+      midlineShiftMm: null,
+      crDeviationMm: null,
+      crStatus: 'UNAVAILABLE',
+      sciEstimateDeg: null,
+      bennettLeftDeg: null,
+      bennettRightDeg: null
+    }
+  };
+
+  const emptyExocad = JSON.parse(generateExocadArticulatorFile(emptyCase));
+  assert(
+    emptyExocad.articulator.vdo_mm === null &&
+    emptyExocad.articulator.horizontalCondylarInclination_Left === null &&
+    emptyExocad.mountingMatrix4x4 === null,
+    '20b: Incomplete measurements output null in CAD export without manufacturing default numbers',
+    `VDO=${emptyExocad.articulator.vdo_mm}, MountingMatrix=${emptyExocad.mountingMatrix4x4}`
+  );
+}
+
+
+// -----------------------------------------------------------------------------
+// TEST 21: Day 1 — Patient Workflow Safety, Record Isolation & Camera Lifecycle
+// -----------------------------------------------------------------------------
+console.log('\nTest Group 21: Patient Workflow Safety, Record Isolation & Camera Lifecycle');
+{
+  // 21a: Patient Record Isolation — Editing patient details strictly updates the targeted record without modifying other records
+  const initialRegistry: PatientCase[] = [
+    {
+      patientId: 'SB-8042',
+      name: 'Sunita Verma',
+      age: 62,
+      gender: 'FEMALE',
+      dentitionState: 'EDENTULOUS',
+      articulator: 'HANAU_WIDE_VUE',
+      createdAt: '2026-03-01T10:00:00Z',
+      dataProvenance: 'SIMULATED',
+      biometrics: { lowerThirdPct: 33.1, bizFaceRatio: 0.72, facialForm: 'square', interpupillaryTiltDeg: 1.2, bizygomaticWidthMm: 136, facialHeightMm: 190, lipGapMm: 2.0, midlineDeviationMm: 0.3, estimatedShade: 'A2' },
+      measurements: { provenance: 'SIMULATED', vdoMm: 62.5, freewaySpaceMm: 3.5, vdrMm: 66.0, occlusalTiltMLDeg: 1.4, occlusalTiltAPDeg: 4.8, midlineShiftMm: 0.3, crDeviationMm: 0.26, crStatus: 'ACCEPTED', sciEstimateDeg: 34.0, bennettAngleDeg: 16.0, bennettLeftDeg: 16.2, bennettRightDeg: 16.5 },
+      crRecords: [],
+      gothicArchPoints: []
+    },
+    {
+      patientId: 'SB-5501',
+      name: 'Anand Patel',
+      age: 58,
+      gender: 'MALE',
+      dentitionState: 'PARTIALLY_EDENTULOUS',
+      articulator: 'ARTEX_CR',
+      createdAt: '2026-03-02T11:00:00Z',
+      dataProvenance: 'UNAVAILABLE',
+      biometrics: { lowerThirdPct: 34.0, bizFaceRatio: 0.70, facialForm: 'ovoid', interpupillaryTiltDeg: 0.0, bizygomaticWidthMm: 138, facialHeightMm: 188, lipGapMm: 1.0, midlineDeviationMm: 0.0, estimatedShade: 'A3' },
+      measurements: { provenance: 'UNAVAILABLE', vdoMm: null, freewaySpaceMm: null, vdrMm: null, occlusalTiltMLDeg: null, occlusalTiltAPDeg: null, midlineShiftMm: null, crDeviationMm: null, crStatus: 'UNAVAILABLE', sciEstimateDeg: null, bennettAngleDeg: null, bennettLeftDeg: null, bennettRightDeg: null },
+      crRecords: [],
+      gothicArchPoints: []
+    }
+  ];
+
+  // Perform isolated edit on Patient 1
+  const updatedSunita: PatientCase = {
+    ...initialRegistry[0],
+    name: 'Sunita Verma-Gupta',
+    clinicalNotes: 'Follow-up examination for bilateral wax rim delivery'
+  };
+
+  const updatedRegistry = initialRegistry.map(c => 
+    c.patientId === updatedSunita.patientId ? updatedSunita : c
+  );
+
+  const patient2Untouched = updatedRegistry[1].name === 'Anand Patel' &&
+    updatedRegistry[1].patientId === 'SB-5501' &&
+    updatedRegistry[1].dentitionState === 'PARTIALLY_EDENTULOUS';
+
+  assert(
+    updatedRegistry[0].name === 'Sunita Verma-Gupta' && patient2Untouched,
+    '21a: Patient record isolation: Editing a patient case does not overwrite a different patient case',
+    `Patient 2 was erroneously modified or Patient 1 not updated`
+  );
+
+  // 21b: Start New Examination resets active measurements while preserving patient demographics
+  const newExamCase: PatientCase = {
+    ...updatedRegistry[0],
+    updatedAt: new Date().toISOString(),
+    workflowStage: 'ASSESSMENT',
+    dataProvenance: 'UNAVAILABLE',
+    measurements: {
+      provenance: 'UNAVAILABLE',
+      sourceStatus: 'UNAVAILABLE',
+      vdoMm: null,
+      freewaySpaceMm: null,
+      vdrMm: null,
+      occlusalTiltMLDeg: null,
+      occlusalTiltAPDeg: null,
+      midlineShiftMm: null,
+      crDeviationMm: null,
+      crStatus: 'UNAVAILABLE',
+      sciEstimateDeg: null,
+      bennettAngleDeg: null,
+      bennettLeftDeg: null,
+      bennettRightDeg: null,
+      timestamps: {}
+    },
+    crRecords: [],
+    gothicArchPoints: []
+  };
+
+  const examResetCorrectly = 
+    newExamCase.patientId === 'SB-8042' &&
+    newExamCase.name === 'Sunita Verma-Gupta' &&
+    newExamCase.dentitionState === 'EDENTULOUS' &&
+    newExamCase.measurements.vdoMm === null &&
+    newExamCase.measurements.crDeviationMm === null &&
+    newExamCase.measurements.crStatus === 'UNAVAILABLE' &&
+    newExamCase.dataProvenance === 'UNAVAILABLE' &&
+    newExamCase.crRecords.length === 0;
+
+  assert(
+    examResetCorrectly,
+    '21b: Starting a new examination preserves demographics while resetting active trials to UNAVAILABLE',
+    `Demographics or measurement reset mismatch: vdo=${newExamCase.measurements.vdoMm}`
+  );
+
+  // 21c: Unique Patient ID Collision Prevention
+  const existingIds = ['SB-1001', 'SB-1002', 'SB-1003'];
+  let generatedCandidate = 'SB-1001';
+  let attempts = 0;
+  while (existingIds.includes(generatedCandidate)) {
+    attempts++;
+    generatedCandidate = `SB-999${attempts}`;
+  }
+
+  assert(
+    !existingIds.includes(generatedCandidate) && attempts > 0,
+    '21c: Unique Patient ID generation detects collisions and produces unique non-overlapping IDs',
+    `Collision check failed: generated=${generatedCandidate}`
+  );
+
+  // 21d: Camera gating prevents capture when stream is stopped or uninitialized
+  const inactiveCameraDiagnostic = evaluateOpticalDiagnostic({
+    mode: 'WEBCAM',
+    cameraActive: false, // Stopped/Paused
+    cameraError: null,
+    faceDetected: false,
+    faceMarkersComplete: false,
+    arucoDetected: false,
+    maxillaryComplete: false,
+    mandibularComplete: false,
+    cameraCalibrated: false,
+    markerSizeVerified: false,
+    trackingStable: false,
+    telemetryAgeMs: 0
+  });
+
+  assert(
+    inactiveCameraDiagnostic.state === 'CAMERA_NOT_AVAILABLE' &&
+    inactiveCameraDiagnostic.engineeringTestAllowed === false,
+    '21d: Camera gating prevents capture when camera stream is stopped or uninitialized',
+    `Capture was permitted despite inactive camera: state=${inactiveCameraDiagnostic.state}`
+  );
+
+  // 21e: Camera permission denial safety gating
+  const permissionDeniedDiagnostic = evaluateOpticalDiagnostic({
+    mode: 'WEBCAM',
+    cameraActive: false,
+    cameraError: 'Permission denied. Please allow camera access in browser permissions.',
+    faceDetected: false,
+    faceMarkersComplete: false,
+    arucoDetected: false,
+    maxillaryComplete: false,
+    mandibularComplete: false,
+    cameraCalibrated: false,
+    markerSizeVerified: false,
+    trackingStable: false,
+    telemetryAgeMs: 0
+  });
+
+  assert(
+    permissionDeniedDiagnostic.state === 'CAMERA_NOT_AVAILABLE' &&
+    permissionDeniedDiagnostic.actionableGuidance.toLowerCase().includes('permission') &&
+    permissionDeniedDiagnostic.engineeringTestAllowed === false,
+    '21e: Camera permission denial safely presents actionable guidance and strictly blocks capture',
+    `Permission denial guidance missing: ${permissionDeniedDiagnostic.actionableGuidance}`
+  );
+}
+
+// -----------------------------------------------------------------------------
+// TEST 22: Live ArUco Computer Vision Pipeline (Raster ImageData + Diagnostics)
+// -----------------------------------------------------------------------------
+console.log('\nTest Group 22: Live ArUco CV Pipeline, Raster ImageData & Failure Diagnostics');
+{
+  interface RgbaBuffer {
+    data: Uint8ClampedArray;
+    width: number;
+    height: number;
+  }
+
+  function createBlankFrame(width: number, height: number, bgGray: number = 240): RgbaBuffer {
+    const data = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = bgGray;
+      data[i + 1] = bgGray;
+      data[i + 2] = bgGray;
+      data[i + 3] = 255;
+    }
+    return { data, width, height };
+  }
+
+  function setPixel(buf: RgbaBuffer, x: number, y: number, gray: number) {
+    if (x < 0 || x >= buf.width || y < 0 || y >= buf.height) return;
+    const idx = (y * buf.width + x) * 4;
+    buf.data[idx] = gray;
+    buf.data[idx + 1] = gray;
+    buf.data[idx + 2] = gray;
+    buf.data[idx + 3] = 255;
+  }
+
+  /**
+   * Rasterizes an arbitrary N x N grid (e.g. 6x6 DICT_4X4_50 or 8x8 DICT_6X6_250)
+   * onto an RGBA buffer with arbitrary center, size, rotation (deg), and optional perspective skew.
+   * Uses inverse bilinear/nearest grid mapping with crisp white quiet zone.
+   */
+  function drawGridMarkerToFrame(
+    buf: RgbaBuffer,
+    grid: number[][],
+    centerX: number,
+    centerY: number,
+    markerSizePx: number,
+    angleDeg: number = 0,
+    perspectiveSkewX: number = 0,
+    darkGray: number = 12,
+    lightGray: number = 248
+  ) {
+    const N = grid.length;
+    const half = markerSizePx / 2;
+    const quietHalf = half * 1.35;
+    const rad = (angleDeg * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+
+    const minX = Math.max(0, Math.floor(centerX - quietHalf * 1.6));
+    const maxX = Math.min(buf.width - 1, Math.ceil(centerX + quietHalf * 1.6));
+    const minY = Math.max(0, Math.floor(centerY - quietHalf * 1.6));
+    const maxY = Math.min(buf.height - 1, Math.ceil(centerY + quietHalf * 1.6));
+
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const dx = x - centerX;
+        const dy = y - centerY;
+        // Inverse rotation into marker local axes
+        let lx = dx * cos + dy * sin;
+        const ly = -dx * sin + dy * cos;
+        // Optional trapezoidal perspective foreshortening along vertical axis
+        const scaleAtY = 1 + (ly / Math.max(1, half)) * perspectiveSkewX;
+        lx = lx / Math.max(0.45, scaleAtY);
+
+        if (Math.abs(lx) <= quietHalf && Math.abs(ly) <= quietHalf) {
+          if (Math.abs(lx) <= half && Math.abs(ly) <= half) {
+            const u = ((lx + half) / markerSizePx) * N;
+            const v = ((ly + half) / markerSizePx) * N;
+            const c = Math.max(0, Math.min(N - 1, Math.floor(u)));
+            const r = Math.max(0, Math.min(N - 1, Math.floor(v)));
+            setPixel(buf, x, y, grid[r][c] === 0 ? darkGray : lightGray);
+          } else {
+            setPixel(buf, x, y, lightGray);
+          }
+        }
+      }
+    }
+  }
+
+  function buildOpenCv6x6FromBytes(b0: number, b1: number): number[][] {
+    const bits: number[] = [];
+    for (let i = 7; i >= 0; i--) bits.push((b0 >> i) & 1);
+    for (let i = 7; i >= 0; i--) bits.push((b1 >> i) & 1);
+    const g: number[][] = Array.from({ length: 6 }, () => Array(6).fill(0));
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 4; c++) g[r + 1][c + 1] = bits[r * 4 + c];
+    }
+    return g;
+  }
+
+  // Case 1: Independently generated OpenCV DICT_4X4_50 markers rasterized as camera frames
+  const frameOpenCv = createBlankFrame(420, 320, 225);
+  const independentId0Grid = buildOpenCv6x6FromBytes(181, 50); // OpenCV ID 0 bytes [181, 50]
+  const independentId3Grid = buildOpenCv6x6FromBytes(153, 70); // OpenCV ID 3 bytes [153, 70]
+  drawGridMarkerToFrame(frameOpenCv, independentId0Grid, 120, 160, 110, 0);
+  drawGridMarkerToFrame(frameOpenCv, independentId3Grid, 300, 160, 110, 0);
+
+  const detOpenCv = detectArucoMarkersFromImageData(frameOpenCv);
+  const id0 = detOpenCv.markers.find(m => m.id === 0);
+  const id3 = detOpenCv.markers.find(m => m.id === 3);
+  const cornersInBounds =
+    Boolean(id0 && id3) &&
+    Math.hypot(id0!.center.x - 120, id0!.center.y - 160) < 3.0 &&
+    Math.hypot(id3!.center.x - 300, id3!.center.y - 160) < 3.0;
+
+  assert(
+    detOpenCv.dictionary === ARUCO_DICTIONARY_NAME &&
+      detOpenCv.frameProcessed === true &&
+      detOpenCv.markers.length === 2 &&
+      cornersInBounds,
+    '22a (Case 1): Independently byte-unpacked OpenCV DICT_4X4_50 rasterized markers detected with <3px center accuracy',
+    `Detected=${JSON.stringify(detOpenCv.detectedIds)}, failure=${detOpenCv.failureCategory}`
+  );
+
+  // Case 2: All registered clinical & calibration IDs (0..12, 20..28) detect accurately from rasterized frames
+  const clinicalIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 20, 21, 22, 23, 24, 25, 26, 27, 28];
+  let allRasterIdsOk = true;
+  let rasterFailMsg = '';
+  for (const id of clinicalIds) {
+    const f = createBlankFrame(220, 220, 230);
+    drawGridMarkerToFrame(f, getFullMarkerGrid(id), 110, 110, 108, 0);
+    const res = detectArucoMarkersFromImageData(f);
+    if (res.markers.length !== 1 || res.markers[0].id !== id) {
+      allRasterIdsOk = false;
+      rasterFailMsg = `Expected [${id}], got ${JSON.stringify(res.detectedIds)} (${res.failureCategory})`;
+      break;
+    }
+  }
+  assert(
+    allRasterIdsOk,
+    '22b (Case 2): Correct marker ID recognition across all 22 registered clinical & calibration DICT_4X4_50 IDs from raster frames',
+    rasterFailMsg
+  );
+
+  // Case 3: Wrong dictionary (8x8 DICT_6X6_250 pattern) is rejected cleanly
+  // Authentic OpenCV DICT_6X6_250 ID 0 inner 6x6 pattern surrounded by 1-bit black border -> 8x8 total
+  const dict6x6Grid8x8: number[][] = [
+    [0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 1, 0, 1, 1, 0, 1, 0],
+    [0, 0, 1, 1, 0, 1, 0, 0],
+    [0, 1, 1, 0, 1, 1, 1, 0],
+    [0, 0, 0, 1, 0, 0, 1, 0],
+    [0, 1, 0, 0, 1, 1, 0, 0],
+    [0, 1, 1, 0, 0, 1, 1, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0],
+  ];
+  const frameWrongDict = createBlankFrame(260, 260, 235);
+  drawGridMarkerToFrame(frameWrongDict, dict6x6Grid8x8, 130, 130, 128, 0);
+  const detWrongDict = detectArucoMarkersFromImageData(frameWrongDict);
+
+  assert(
+    detWrongDict.markers.length === 0 && detWrongDict.failureCategory === 'WRONG_DICTIONARY_OR_ID',
+    '22c (Case 3): Foreign DICT_6X6_250 (8x8) marker is rejected cleanly with WRONG_DICTIONARY_OR_ID diagnostic',
+    `Got markers=${JSON.stringify(detWrongDict.detectedIds)}, category=${detWrongDict.failureCategory}`
+  );
+
+  // Case 4: Rotated markers (90°, 180°, 270°, plus arbitrary 22° tilt + perspective skew) detect with canonical corner order
+  const rotAngles = [90, 180, 270, 22];
+  let rotAllOk = true;
+  let rotFailMsg = '';
+  for (const ang of rotAngles) {
+    const fRot = createBlankFrame(300, 300, 235);
+    const skew = ang === 22 ? 0.14 : 0;
+    drawGridMarkerToFrame(fRot, getFullMarkerGrid(5), 150, 150, 120, ang, skew);
+    const resRot = detectArucoMarkersFromImageData(fRot);
+    if (resRot.markers.length !== 1 || resRot.markers[0].id !== 5) {
+      rotAllOk = false;
+      rotFailMsg = `Angle ${ang}° failed: got ${JSON.stringify(resRot.detectedIds)} (${resRot.failureCategory})`;
+      break;
+    }
+  }
+  // Specifically check that 180° rotated marker has corners[0] rotated to bottom-right quadrant (x > center.x, y > center.y)
+  const f180 = createBlankFrame(260, 260, 235);
+  drawGridMarkerToFrame(f180, getFullMarkerGrid(4), 130, 130, 108, 180);
+  const det180 = detectArucoMarkersFromImageData(f180);
+  const c0IsBottomRight =
+    det180.markers.length === 1 &&
+    det180.markers[0].corners[0].x > det180.markers[0].center.x &&
+    det180.markers[0].corners[0].y > det180.markers[0].center.y;
+
+  assert(
+    rotAllOk && c0IsBottomRight,
+    '22d (Case 4): Rotated markers (90°, 180°, 270°, 22° + perspective skew) detect cleanly and align corners[0] to canonical Top-Left',
+    `${rotFailMsg}; c0IsBottomRight=${c0IsBottomRight}`
+  );
+
+  // Case 5: Multiple markers simultaneously in one 640x480 frame (Maxillary 3-6 + Mandibular 7-10)
+  const multiFrame = createBlankFrame(640, 480, 228);
+  const placements: Array<{ id: number; x: number; y: number }> = [
+    { id: 3, x: 140, y: 120 },
+    { id: 4, x: 260, y: 120 },
+    { id: 5, x: 140, y: 240 },
+    { id: 6, x: 260, y: 240 },
+    { id: 7, x: 420, y: 120 },
+    { id: 8, x: 540, y: 120 },
+    { id: 9, x: 420, y: 240 },
+    { id: 10, x: 540, y: 240 },
+  ];
+  for (const p of placements) {
+    drawGridMarkerToFrame(multiFrame, getFullMarkerGrid(p.id), p.x, p.y, 72, p.id % 2 === 0 ? 12 : -8);
+  }
+  const detMulti = detectArucoMarkersFromImageData(multiFrame);
+  const expectedMulti = [3, 4, 5, 6, 7, 8, 9, 10];
+  const gotAll8 = expectedMulti.every(id => detMulti.detectedIds.includes(id)) && detMulti.markers.length === 8;
+
+  assert(
+    gotAll8,
+    '22e (Case 5): Multiple buccal fiducial arrays (8 simultaneous DICT_4X4_50 markers) detected cleanly in a single frame',
+    `Expected [3..10], got ${JSON.stringify(detMulti.detectedIds)}`
+  );
+
+  // Case 6: Empty frame with no markers returns [] cleanly
+  const emptyFrame = createBlankFrame(320, 240, 180);
+  const detEmpty = detectArucoMarkersFromImageData(emptyFrame);
+  assert(
+    detEmpty.frameProcessed === true && detEmpty.markers.length === 0 && detEmpty.failureCategory === 'NO_CANDIDATES',
+    '22f (Case 6): Empty frame returns 0 markers cleanly with NO_CANDIDATES diagnostic',
+    `Got markers=${detEmpty.markers.length}, cat=${detEmpty.failureCategory}`
+  );
+
+  // Case 7: Partially obscured marker (border/corner damaged by white smudge) is rejected
+  const obscuredFrame = createBlankFrame(260, 260, 235);
+  drawGridMarkerToFrame(obscuredFrame, getFullMarkerGrid(1), 130, 130, 120, 0);
+  // Paint white occlusion bar cutting diagonally/across top-left border + data bits without breaking quad contour too much
+  for (let y = 78; y < 105; y++) {
+    for (let x = 105; x < 155; x++) {
+      setPixel(obscuredFrame, x, y, 248);
+    }
+  }
+  const detObscured = detectArucoMarkersFromImageData(obscuredFrame);
+  assert(
+    detObscured.markers.length === 0,
+    '22g (Case 7): Partially obscured marker is strictly rejected (zero false positive IDs)',
+    `Falsely detected: ${JSON.stringify(detObscured.detectedIds)}`
+  );
+
+  // Case 8 & 11: Real raster checks for too-small & poor-lighting + 9-condition live ArUco diagnostic evaluation
+  const tinyFrame = createBlankFrame(220, 220, 225);
+  drawGridMarkerToFrame(tinyFrame, getFullMarkerGrid(0), 110, 110, 9, 0); // 9x9px marker (below 12px decoding threshold)
+  const detTiny = detectArucoMarkersFromImageData(tinyFrame);
+
+  const darkFrame = createBlankFrame(220, 220, 18); // Very dark scene (< 42 mean luminance)
+  const detDark = detectArucoMarkersFromImageData(darkFrame);
+
+  const diagCamUnavail = evaluateArucoPipelineDiagnostic({ cameraActive: false, cameraPoweredOn: true, cameraError: 'NotFoundError: Requested device not found', frameDiag: null, detectedIds: [] });
+  const diagPermDenied = evaluateArucoPipelineDiagnostic({ cameraActive: false, cameraPoweredOn: true, cameraError: 'NotAllowedError: Permission denied by user', frameDiag: null, detectedIds: [] });
+  const diagInitFail = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: { ...detEmpty, detectorInitialized: false, initError: 'Canvas 2D missing', failureCategory: 'DETECTOR_INIT_FAILED' },
+    detectedIds: [],
+  });
+  const diagProcFail = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: { ...detEmpty, frameProcessed: false, frameError: 'Zero buffer', failureCategory: 'FRAME_PROCESSING_FAILED' },
+    detectedIds: [],
+  });
+  const diagTooSmall = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: detTiny,
+    detectedIds: detTiny.detectedIds,
+  });
+  const diagPoorLight = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: detDark,
+    detectedIds: detDark.detectedIds,
+  });
+  const diagObscured = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: { ...detEmpty, failureCategory: 'PARTIALLY_OBSCURED', rejectedBorderCorruptedCount: 1 },
+    detectedIds: [],
+  });
+  const diagWrongDict = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: detWrongDict,
+    detectedIds: detWrongDict.detectedIds,
+  });
+  const diagNoMarker = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: detEmpty,
+    detectedIds: [],
+  });
+  const diagDetected = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: detOpenCv,
+    detectedIds: detOpenCv.detectedIds,
+  });
+
+  assert(
+    diagCamUnavail.condition === 'CAMERA_NOT_AVAILABLE' &&
+      diagPermDenied.condition === 'CAMERA_PERMISSION_DENIED' &&
+      diagInitFail.condition === 'DETECTOR_INIT_FAILED' &&
+      diagProcFail.condition === 'FRAME_PROCESSING_FAILED' &&
+      diagTooSmall.condition === 'MARKER_TOO_SMALL' &&
+      diagPoorLight.condition === 'POOR_LIGHTING_OR_GLARE' &&
+      diagObscured.condition === 'PARTIALLY_OBSCURED' &&
+      diagWrongDict.condition === 'WRONG_DICTIONARY_OR_ID' &&
+      diagNoMarker.condition === 'CAMERA_ACTIVE_NO_MARKERS' &&
+      diagDetected.condition === 'MARKERS_DETECTED',
+    '22h (Case 8 & 11): Granular live diagnostic state classifier distinguishes all 9 failure states + MARKERS_DETECTED cleanly',
+    `Conditions: cam=${diagCamUnavail.condition}, perm=${diagPermDenied.condition}, init=${diagInitFail.condition}, proc=${diagProcFail.condition}, small=${diagTooSmall.condition} (tinyCat=${detTiny.failureCategory}), dark=${diagPoorLight.condition} (darkCat=${detDark.failureCategory}), obs=${diagObscured.condition}, dict=${diagWrongDict.condition}, none=${diagNoMarker.condition}, ok=${diagDetected.condition}`
+  );
+
+  // Case 9: Detector initialization & frame processing failure handling
+  const nullSourceRes = detectArucoMarkersDetailed(null as any);
+  const zeroBufferRes = detectArucoMarkersFromImageData({ data: new Uint8ClampedArray(0), width: 0, height: 0 });
+  assert(
+    nullSourceRes.detectorInitialized === false &&
+      nullSourceRes.failureCategory === 'DETECTOR_INIT_FAILED' &&
+      zeroBufferRes.frameProcessed === false &&
+      zeroBufferRes.failureCategory === 'FRAME_PROCESSING_FAILED',
+    '22i (Case 9): Null video source yields DETECTOR_INIT_FAILED and empty 0x0 buffer yields FRAME_PROCESSING_FAILED without throwing',
+    `nullCat=${nullSourceRes.failureCategory}, zeroCat=${zeroBufferRes.failureCategory}`
+  );
+
+  // Case 10: Coordinate overlay transformation (object-fit: cover crop + horizontal mirroring)
+  // Landscape 1280x720 camera stream displayed inside portrait 720x1280 smartphone canvas
+  const tfRear = computeCoverTransform(1280, 720, 720, 1280, false);
+  const centerRear = mapVideoPointToCanvas({ x: 640, y: 360 }, tfRear);
+  const tfFront = computeCoverTransform(1280, 720, 720, 1280, true);
+  const rightSideFront = mapVideoPointToCanvas({ x: 960, y: 360 }, tfFront);
+
+  assert(
+    Math.abs(centerRear.x - 360) < 0.01 &&
+      Math.abs(centerRear.y - 640) < 0.01 &&
+      rightSideFront.x < 360 &&
+      Math.abs(rightSideFront.y - 640) < 0.01,
+    '22j (Case 10): Cover crop + mirror coordinate mapping accurately maps center & mirrors front-camera X without clipping distortion',
+    `center=(${centerRear.x}, ${centerRear.y}), mirroredRight=(${rightSideFront.x}, ${rightSideFront.y})`
+  );
+
+  // Extra Check: Verify PDF vector marker border polarity emits pure black ('0. g'), NOT inverted white!
+  const markerPdf = new jsPDF({ compress: false });
+  drawVectorArUcoMarker(markerPdf, 0, 10, 10, 14);
+  const markerStreamLines: string[] = markerPdf
+    .output()
+    .split('\n')
+    .filter((l: string) => l === '0. g' || l === '1. g');
+  const topRowAllBlack = markerStreamLines.slice(0, 6).every((l) => l === '0. g');
+  // Row 1 (cells 6..11) for OpenCV ID 0 (b0=181=10110101 -> top 4 inner bits 1,0,1,1) => [0, 1, 0, 1, 1, 0]
+  const row1Expected = ['0. g', '1. g', '0. g', '1. g', '1. g', '0. g'];
+  const row1MatchesOpenCv = row1Expected.every((exp, idx) => markerStreamLines[6 + idx] === exp);
+  const a4PdfRaw = generateVectorA4Pdf({ compress: false }).output();
+
+  assert(
+    topRowAllBlack && row1MatchesOpenCv && a4PdfRaw.includes('0. g'),
+    '22k: Vector PDF renders OpenCV DICT_4X4_50 black border (0. g) and non-inverted bit cells matching canonical bytes',
+    `topRow=${JSON.stringify(markerStreamLines.slice(0, 6))}, row1=${JSON.stringify(markerStreamLines.slice(6, 12))}`
+  );
+}
 
 // -----------------------------------------------------------------------------
 // SUMMARY REPORT

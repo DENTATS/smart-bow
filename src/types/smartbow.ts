@@ -84,9 +84,17 @@ export interface FacialBiometrics {
 
 export type DataProvenance = 'SIMULATED' | 'MEASURED' | 'UNAVAILABLE';
 
+export type MeasurementSourceStatus = 
+  | 'LIVE_MEASURED'
+  | 'LIVE_UNCALIBRATED'
+  | 'CALIBRATED_ENGINEERING'
+  | 'SIMULATED_DEMO'
+  | 'UNAVAILABLE';
+
 export interface ProvenanceValue<T = number> {
   value: T | null;
   provenance: DataProvenance;
+  sourceStatus?: MeasurementSourceStatus;
   unit: string;
   isValid: boolean;
   notes?: string;
@@ -94,6 +102,7 @@ export interface ProvenanceValue<T = number> {
 
 export interface ClinicalMeasurements {
   provenance: DataProvenance;
+  sourceStatus?: MeasurementSourceStatus;
   vdoMm: number | null; // Vertical Dimension of Occlusion (mm) or null if UNAVAILABLE
   freewaySpaceMm?: number | null; // VDR - VDO
   vdrMm?: number | null; // Vertical Dimension at Rest
@@ -106,6 +115,7 @@ export interface ClinicalMeasurements {
   bennettAngleDeg?: number | null;
   bennettLeftDeg: number | null;
   bennettRightDeg: number | null;
+  timestamps?: Record<string, string>;
 }
 
 export interface CrRecord {
@@ -196,6 +206,10 @@ export interface PatientCase {
   crRecords: CrRecord[];
   gothicArchPoints: GothicArchPoint[];
   cameraCalibration?: CameraCalibration;
+  frontalPhotoUrl?: string;
+  profilePhotoUrl?: string;
+  workflowStage?: 'ASSESSMENT' | 'CALIBRATION' | 'MAXILLA_ACQUISITION' | 'MANDIBLE_ACQUISITION' | 'VDO' | 'CR' | 'GOTHIC_ARCH' | 'COMPLETED';
+  calibrationStatus?: 'UNCALIBRATED' | 'CALIBRATED';
 }
 
 export interface ValidationBenchTest {

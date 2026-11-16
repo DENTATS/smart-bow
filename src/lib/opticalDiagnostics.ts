@@ -178,3 +178,171 @@ export function checkCaptureReadiness(input: OpticalDiagnosticInput): {
     diagnostic,
   };
 }
+
+export type LiveArucoPipelineCondition =
+  | 'CAMERA_NOT_AVAILABLE'
+  | 'CAMERA_PERMISSION_DENIED'
+  | 'DETECTOR_INIT_FAILED'
+  | 'FRAME_PROCESSING_FAILED'
+  | 'WRONG_DICTIONARY_OR_ID'
+  | 'MARKER_TOO_SMALL'
+  | 'POOR_LIGHTING_OR_GLARE'
+  | 'PARTIALLY_OBSCURED'
+  | 'CAMERA_ACTIVE_NO_MARKERS'
+  | 'MARKERS_DETECTED';
+
+export interface LiveArucoDiagnosticStatus {
+  condition: LiveArucoPipelineCondition;
+  severity: 'ERROR' | 'WARNING' | 'READY';
+  title: string;
+  guidance: string;
+  cameraLabel: string;
+  arucoStatusLabel: string;
+  dictionary: 'DICT_4X4_50';
+  detectedCount: number;
+  detectedIds: number[];
+  missingClinicalIds: number[];
+  faceGroupStatus: { detectedIds: number[]; missingIds: number[]; status: 'COMPLETE' | 'PARTIAL' | 'MISSING' };
+  maxillaGroupStatus: { detectedIds: number[]; missingIds: number[]; status: 'COMPLETE' | 'PARTIAL' | 'MISSING' };
+  mandibleGroupStatus: { detectedIds: number[]; missingIds: number[]; status: 'COMPLETE' | 'PARTIAL' | 'MISSING' };
+}
+
+export interface LiveArucoDiagnosticInput {
+  cameraActive: boolean;
+  cameraPoweredOn: boolean;
+  cameraError: string | null;
+  frameDiag: import('./arucoDetector').ArucoFrameDiagnostics | null;
+  detectedIds: number[];
+  expectedIds?: number[];
+}
+
+const CLINICAL_FACE_IDS = [0, 1, 2];
+const CLINICAL_MAXILLA_IDS = [3, 4, 5, 6];
+const CLINICAL_MANDIBLE_IDS = [7, 8, 9, 10];
+
+function evalGroup(groupIds: number[], detectedIds: number[]) {
+  const det = groupIds.filter(id => detectedIds.includes(id));
+  const miss = groupIds.filter(id => !detectedIds.includes(id));
+  const status: 'COMPLETE' | 'PARTIAL' | 'MISSING' =
+    det.length === groupIds.length ? 'COMPLETE' : det.length > 0 ? 'PARTIAL' : 'MISSING';
+  return { detectedIds: det, missingIds: miss, status };
+}
+
+/**
+ * Granular 9-condition (+ READY) CV Pipeline Diagnostic Evaluator for live webcam & Marker Test Mode.
+ */
+export function evaluateArucoPipelineDiagnostic(
+  input: LiveArucoDiagnosticInput
+): LiveArucoDiagnosticStatus {
+  const { cameraActive, cameraPoweredOn, cameraError, frameDiag } = input;
+  const detectedIds = input.detectedIds ?? frameDiag?.detectedIds ?? [];
+  const expected = input.expectedIds ?? [...CLINICAL_FACE_IDS, ...CLINICAL_MAXILLA_IDS, ...CLINICAL_MANDIBLE_IDS];
+  const missingClinicalIds = expected.filter(id => !detectedIds.includes(id));
+
+  const faceGroupStatus = evalGroup(CLINICAL_FACE_IDS, detectedIds);
+  const maxillaGroupStatus = evalGroup(CLINICAL_MAXILLA_IDS, detectedIds);
+  const mandibleGroupStatus = evalGroup(CLINICAL_MANDIBLE_IDS, detectedIds);
+
+  const errLower = (cameraError || '').toLowerCase();
+  const isPermissionDenied =
+    errLower.includes('permission') ||
+    errLower.includes('denied') ||
+    errLower.includes('notallowed');
+
+  let condition: LiveArucoPipelineCondition;
+  let severity: 'ERROR' | 'WARNING' | 'READY' = 'WARNING';
+  let title = '';
+  let guidance = '';
+  let cameraLabel = cameraActive && cameraPoweredOn ? 'ACTIVE' : 'UNAVAILABLE';
+  let arucoStatusLabel = detectedIds.length > 0 ? 'DETECTED' : 'SEARCHING';
+
+  if (isPermissionDenied) {
+    condition = 'CAMERA_PERMISSION_DENIED';
+    severity = 'ERROR';
+    title = 'Camera Permission Denied';
+    guidance = 'Allow browser camera access in site permissions, then click Retry Camera Permission.';
+    cameraLabel = 'PERMISSION DENIED';
+    arucoStatusLabel = 'BLOCKED';
+  } else if (!cameraPoweredOn) {
+    condition = 'CAMERA_NOT_AVAILABLE';
+    severity = 'WARNING';
+    title = 'Camera Stream Paused';
+    guidance = 'Start the camera feed to begin live ArUco fiducial detection.';
+    cameraLabel = 'PAUSED';
+    arucoStatusLabel = 'IDLE';
+  } else if (!cameraActive || cameraError) {
+    condition = 'CAMERA_NOT_AVAILABLE';
+    severity = 'ERROR';
+    title = 'Camera Not Available';
+    guidance = cameraError || 'Connect a USB/integrated camera or close other apps locking the webcam.';
+    cameraLabel = 'NOT AVAILABLE';
+    arucoStatusLabel = 'BLOCKED';
+  } else if (frameDiag && !frameDiag.detectorInitialized) {
+    condition = 'DETECTOR_INIT_FAILED';
+    severity = 'ERROR';
+    title = 'Detector Initialization Failure';
+    guidance = frameDiag.initError || 'Failed to initialize browser Canvas 2D / ArUco detector runtime.';
+    arucoStatusLabel = 'INIT FAILED';
+  } else if (frameDiag && !frameDiag.frameProcessed) {
+    condition = 'FRAME_PROCESSING_FAILED';
+    severity = 'ERROR';
+    title = 'Frame Processing Failure';
+    guidance = frameDiag.frameError || 'Video frame could not be read for ArUco decoding. Try switching camera resolution or restarting feed.';
+    arucoStatusLabel = 'FRAME ERROR';
+  } else if (detectedIds.length > 0) {
+    condition = 'MARKERS_DETECTED';
+    severity = 'READY';
+    title = `${detectedIds.length} ArUco Marker${detectedIds.length === 1 ? '' : 's'} Detected (DICT_4X4_50)`;
+    guidance = 'Live perspective-invariant DICT_4X4_50 decoding active. Hold steady to keep fiducials inside FOV.';
+    arucoStatusLabel = 'DETECTED';
+  } else if (frameDiag?.failureCategory === 'WRONG_DICTIONARY_OR_ID') {
+    condition = 'WRONG_DICTIONARY_OR_ID';
+    severity = 'WARNING';
+    title = 'Wrong Dictionary or Unregistered Marker Pattern';
+    guidance = 'Black-bordered square detected, but its inner pattern does not match OpenCV DICT_4X4_50. Print the SmartBow DICT_4X4_50 sheet (not DICT_6X6_250).';
+    arucoStatusLabel = 'DICT MISMATCH';
+  } else if (frameDiag?.failureCategory === 'PARTIALLY_OBSCURED') {
+    condition = 'PARTIALLY_OBSCURED';
+    severity = 'WARNING';
+    title = 'Marker Partially Obscured / Border Clipped';
+    guidance = 'A candidate square border is broken by glare, shadow, fingers, or edge clipping. Ensure full black border and white quiet zone are unobstructed.';
+    arucoStatusLabel = 'OBSCURED';
+  } else if (frameDiag?.failureCategory === 'MARKER_TOO_SMALL') {
+    condition = 'MARKER_TOO_SMALL';
+    severity = 'WARNING';
+    title = 'Marker Too Small in Frame';
+    guidance = 'Square candidate is below 12px decoding minimum. Move marker closer (20–45 cm) or print at 100% scale (no Fit-to-Page).';
+    arucoStatusLabel = 'TOO SMALL';
+  } else if (frameDiag?.failureCategory === 'POOR_LIGHTING_OR_GLARE') {
+    condition = 'POOR_LIGHTING_OR_GLARE';
+    severity = 'WARNING';
+    title = 'Poor Lighting or Specular Glare';
+    guidance = frameDiag.glareRatio > 0.3
+      ? 'Strong paper glare is washing out marker contrast. Tilt card slightly and use diffuse matte paper.'
+      : 'Frame luminance/contrast is too low for thresholding. Increase uniform lighting on the marker.';
+    arucoStatusLabel = 'LOW CONTRAST';
+  } else {
+    condition = 'CAMERA_ACTIVE_NO_MARKERS';
+    severity = 'WARNING';
+    title = 'Camera Active — No Marker Detected';
+    guidance = 'Hold a printed DICT_4X4_50 marker with white quiet zone 20–50 cm in front of the camera.';
+    arucoStatusLabel = 'NO MARKERS';
+  }
+
+  return {
+    condition,
+    severity,
+    title,
+    guidance,
+    cameraLabel,
+    arucoStatusLabel,
+    dictionary: 'DICT_4X4_50',
+    detectedCount: detectedIds.length,
+    detectedIds,
+    missingClinicalIds,
+    faceGroupStatus,
+    maxillaGroupStatus,
+    mandibleGroupStatus,
+  };
+}
+

@@ -28,9 +28,9 @@ export function drawVectorArUcoMarker(
 
   for (let r = 0; r < 6; r++) {
     for (let c = 0; c < 6; c++) {
-      if (grid[r][c]) {
-        // Black cell (bit 0 in OpenCV DICT_4X4_50)
-        pdf.setFillColor(15, 23, 42); // Deep rich black (#0F172A)
+      if (grid[r][c] === 0) {
+        // Black cell (bit 0 in OpenCV DICT_4X4_50, including 1-bit outer border)
+        pdf.setFillColor(0, 0, 0);
         pdf.rect(xMm + c * cellSize, yMm + r * cellSize, cellSize, cellSize, 'F');
       } else {
         // White cell (bit 1 in OpenCV DICT_4X4_50)

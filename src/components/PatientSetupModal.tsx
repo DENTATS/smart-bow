@@ -12,6 +12,7 @@ interface PatientSetupModalProps {
   onClose: () => void;
   onSavePatient: (newCase: PatientCase) => void;
   patientToEdit?: PatientCase | null;
+  existingPatientIds?: string[];
 }
 
 export const PatientSetupModal: React.FC<PatientSetupModalProps> = ({
@@ -19,19 +20,33 @@ export const PatientSetupModal: React.FC<PatientSetupModalProps> = ({
   onClose,
   onSavePatient,
   patientToEdit,
+  existingPatientIds = [],
 }) => {
   const isEditing = !!patientToEdit;
 
+  const [customId, setCustomId] = useState<string>('');
   const [name, setName] = useState<string>('Ramesh Sharma');
   const [age, setAge] = useState<number>(64);
   const [gender, setGender] = useState<'MALE' | 'FEMALE' | 'OTHER'>('MALE');
   const [dentitionState, setDentitionState] = useState<DentitionState>('EDENTULOUS');
   const [articulator, setArticulator] = useState<ArticulatorType>('HANAU_WIDE_VUE');
   const [clinicalNotes, setClinicalNotes] = useState<string>('Bilateral edentulous ridges, Class I ridge relationship, requested balanced occlusion complete denture.');
+  const [idError, setIdError] = useState<string | null>(null);
+
+  // Helper to generate a collision-free ID
+  const generateUniqueId = (): string => {
+    let candidate = `SB-${Math.floor(1000 + Math.random() * 9000)}`;
+    while (existingPatientIds.includes(candidate)) {
+      candidate = `SB-${Math.floor(1000 + Math.random() * 9000)}`;
+    }
+    return candidate;
+  };
 
   // Sync state whenever modal opens or patientToEdit changes
   useEffect(() => {
+    setIdError(null);
     if (patientToEdit) {
+      setCustomId(patientToEdit.patientId);
       setName(patientToEdit.name);
       setAge(patientToEdit.age);
       setGender(patientToEdit.gender);
@@ -39,6 +54,7 @@ export const PatientSetupModal: React.FC<PatientSetupModalProps> = ({
       setArticulator(patientToEdit.articulator);
       setClinicalNotes(patientToEdit.clinicalNotes || '');
     } else {
+      setCustomId(generateUniqueId());
       setName('Ramesh Sharma');
       setAge(64);
       setGender('MALE');
@@ -55,6 +71,7 @@ export const PatientSetupModal: React.FC<PatientSetupModalProps> = ({
 
     if (patientToEdit) {
       // Preserve existing patient ID, timestamps, biometrics, measurements, and clinical records
+      // Guarantee that editing cannot collide with or overwrite another patient
       const updatedCase: PatientCase = {
         ...patientToEdit,
         name: name.trim() || 'Unnamed Patient',
@@ -62,12 +79,19 @@ export const PatientSetupModal: React.FC<PatientSetupModalProps> = ({
         gender,
         dentitionState,
         articulator,
-        clinicalNotes: clinicalNotes.trim()
+        clinicalNotes: clinicalNotes.trim(),
+        updatedAt: new Date().toISOString()
       };
       onSavePatient(updatedCase);
     } else {
+      const finalId = customId.trim() || generateUniqueId();
+      // Ensure the ID does not overwrite another patient
+      if (existingPatientIds.includes(finalId)) {
+        setIdError(`Case ID "${finalId}" is already assigned to another patient. Please choose a unique ID.`);
+        return;
+      }
       const newCase: PatientCase = {
-        patientId: `SB-${Math.floor(1000 + Math.random() * 9000)}`,
+        patientId: finalId,
         name: name.trim() || 'Unnamed Patient',
         age: Number(age) || 60,
         gender,
@@ -144,15 +168,44 @@ export const PatientSetupModal: React.FC<PatientSetupModalProps> = ({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs">
-          <div>
-            <label className="text-slate-300 font-medium block mb-1">Patient Full Name</label>
-            <input
-              type="text"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white"
-            />
+          {idError && (
+            <div className="p-3 rounded-lg bg-rose-500/20 border border-rose-500/40 text-rose-300 font-semibold text-xs">
+              {idError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="sm:col-span-1">
+              <label className="text-slate-300 font-medium block mb-1">
+                Case ID {isEditing ? '(Locked)' : '(Auto/Custom)'}
+              </label>
+              <input
+                type="text"
+                required
+                disabled={isEditing}
+                value={customId}
+                onChange={(e) => {
+                  setCustomId(e.target.value.toUpperCase());
+                  setIdError(null);
+                }}
+                className={`w-full font-mono rounded-lg p-2.5 text-white border ${
+                  isEditing
+                    ? 'bg-slate-900 border-slate-800 text-slate-400 cursor-not-allowed'
+                    : 'bg-slate-950 border-slate-700 focus:border-cyan-500'
+                }`}
+                placeholder="SB-XXXX"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-slate-300 font-medium block mb-1">Patient Full Name</label>
+              <input
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:border-cyan-500"
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

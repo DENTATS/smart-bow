@@ -37,144 +37,76 @@ export const MANDIBULAR_MARKER_IDS = [7, 8, 9, 10];
 export const HANAU_MARKER_IDS = [11, 12];
 export const CALIBRATION_MARKER_IDS = [20, 21, 22, 23, 24, 25, 26, 27, 28];
 
+export const ARUCO_DICTIONARY_NAME = 'DICT_4X4_50' as const;
+export const ARUCO_TOTAL_DICT_SIZE = 50;
+
 /**
- * 4x4 bit patterns (16 bits) for DICT_4X4_50.
+ * Registered clinical & bench calibration marker IDs used by SmartBow workflows.
+ */
+export const REGISTERED_ARUCO_IDS = new Set<number>([
+  ...FACE_MARKER_IDS,
+  ...MAXILLARY_MARKER_IDS,
+  ...MANDIBULAR_MARKER_IDS,
+  ...HANAU_MARKER_IDS,
+  ...CALIBRATION_MARKER_IDS,
+]);
+
+/**
+ * 4x4 bit patterns (16 bits) for OpenCV DICT_4X4_50 (all 50 canonical entries).
  * 1 = white, 0 = black.
- * Standard DICT_4X4_50 binary encodings from OpenCV ArUco specs.
+ * Byte-for-byte equivalent to OpenCV modules/objdetect/src/aruco/predefined_dictionaries.hpp (DICT_4X4_1000_BYTES[0..49]).
  */
 export const ARUCO_DICT_4X4_50_BITS: Record<number, number[][]> = {
-  0: [
-    [1, 0, 1, 1],
-    [0, 1, 0, 0],
-    [1, 1, 1, 0],
-    [0, 1, 1, 1],
-  ],
-  1: [
-    [0, 1, 1, 0],
-    [1, 0, 1, 1],
-    [0, 1, 0, 1],
-    [1, 0, 0, 1],
-  ],
-  2: [
-    [1, 1, 0, 0],
-    [0, 1, 1, 1],
-    [1, 0, 1, 0],
-    [0, 0, 1, 1],
-  ],
-  3: [
-    [0, 1, 0, 1],
-    [1, 1, 1, 0],
-    [0, 0, 1, 1],
-    [1, 0, 1, 0],
-  ],
-  4: [
-    [1, 0, 0, 1],
-    [0, 1, 1, 0],
-    [1, 1, 0, 1],
-    [0, 1, 0, 1],
-  ],
-  5: [
-    [0, 0, 1, 1],
-    [1, 1, 0, 1],
-    [0, 1, 1, 0],
-    [1, 1, 0, 0],
-  ],
-  6: [
-    [1, 1, 1, 0],
-    [0, 0, 1, 1],
-    [1, 0, 0, 1],
-    [0, 1, 1, 0],
-  ],
-  7: [
-    [0, 1, 1, 1],
-    [1, 0, 0, 0],
-    [0, 1, 0, 1],
-    [1, 1, 1, 0],
-  ],
-  8: [
-    [1, 0, 1, 0],
-    [0, 1, 0, 1],
-    [1, 1, 0, 0],
-    [1, 0, 1, 1],
-  ],
-  9: [
-    [0, 0, 1, 0],
-    [1, 1, 1, 1],
-    [1, 0, 1, 0],
-    [0, 1, 0, 1],
-  ],
-  10: [
-    [1, 1, 0, 1],
-    [0, 0, 1, 0],
-    [0, 1, 1, 1],
-    [1, 0, 0, 1],
-  ],
-  11: [
-    [1, 0, 1, 1],
-    [1, 1, 0, 0],
-    [0, 0, 1, 1],
-    [0, 1, 1, 0],
-  ],
-  12: [
-    [0, 1, 0, 0],
-    [1, 0, 1, 1],
-    [1, 1, 0, 1],
-    [1, 0, 1, 0],
-  ],
-  20: [
-    [1, 1, 0, 1],
-    [1, 0, 0, 1],
-    [0, 1, 1, 0],
-    [0, 0, 1, 1],
-  ],
-  21: [
-    [0, 1, 1, 0],
-    [0, 1, 0, 1],
-    [1, 0, 0, 1],
-    [1, 1, 0, 1],
-  ],
-  22: [
-    [1, 0, 0, 1],
-    [1, 1, 1, 0],
-    [0, 0, 1, 1],
-    [0, 1, 0, 1],
-  ],
-  23: [
-    [0, 0, 1, 1],
-    [1, 0, 1, 0],
-    [1, 1, 0, 1],
-    [1, 0, 1, 1],
-  ],
-  24: [
-    [1, 1, 1, 0],
-    [0, 1, 1, 1],
-    [1, 0, 1, 0],
-    [0, 0, 1, 0],
-  ],
-  25: [
-    [0, 1, 0, 1],
-    [1, 1, 0, 0],
-    [0, 1, 1, 1],
-    [1, 1, 0, 1],
-  ],
-  26: [
-    [1, 0, 1, 0],
-    [0, 0, 1, 1],
-    [1, 1, 1, 0],
-    [0, 1, 1, 1],
-  ],
-  27: [
-    [1, 1, 0, 0],
-    [1, 0, 1, 1],
-    [0, 1, 0, 1],
-    [0, 0, 1, 1],
-  ],
-  28: [
-    [0, 0, 1, 1],
-    [0, 1, 1, 0],
-    [1, 1, 0, 1],
-    [1, 0, 0, 1],
-  ],
+  0: [[1, 0, 1, 1], [0, 1, 0, 1], [0, 0, 1, 1], [0, 0, 1, 0]],
+  1: [[0, 0, 0, 0], [1, 1, 1, 1], [1, 0, 0, 1], [1, 0, 1, 0]],
+  2: [[0, 0, 1, 1], [0, 0, 1, 1], [0, 0, 1, 0], [1, 1, 0, 1]],
+  3: [[1, 0, 0, 1], [1, 0, 0, 1], [0, 1, 0, 0], [0, 1, 1, 0]],
+  4: [[0, 1, 0, 1], [0, 1, 0, 0], [1, 0, 0, 1], [1, 1, 1, 0]],
+  5: [[0, 1, 1, 1], [1, 0, 0, 1], [1, 1, 0, 0], [1, 1, 0, 1]],
+  6: [[1, 0, 0, 1], [1, 1, 1, 0], [0, 0, 1, 0], [1, 1, 1, 0]],
+  7: [[1, 1, 0, 0], [0, 1, 0, 0], [1, 1, 1, 1], [0, 0, 1, 0]],
+  8: [[1, 1, 1, 1], [1, 1, 1, 0], [1, 1, 0, 1], [1, 0, 1, 0]],
+  9: [[1, 1, 0, 0], [1, 1, 1, 1], [0, 1, 0, 1], [0, 1, 1, 0]],
+  10: [[1, 1, 1, 1], [1, 0, 0, 1], [1, 0, 0, 1], [0, 0, 0, 1]],
+  11: [[0, 0, 0, 1], [0, 0, 0, 1], [1, 0, 1, 0], [0, 1, 1, 1]],
+  12: [[0, 0, 0, 0], [1, 1, 1, 0], [1, 0, 1, 1], [0, 1, 1, 1]],
+  13: [[0, 0, 1, 0], [1, 0, 1, 0], [0, 0, 0, 0], [1, 1, 1, 1]],
+  14: [[0, 0, 1, 0], [0, 1, 0, 0], [1, 0, 1, 1], [0, 0, 0, 1]],
+  15: [[0, 0, 1, 0], [0, 1, 1, 0], [0, 0, 1, 1], [1, 1, 1, 0]],
+  16: [[0, 1, 0, 0], [0, 1, 1, 0], [0, 1, 1, 0], [0, 1, 0, 1]],
+  17: [[0, 1, 1, 0], [0, 1, 1, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+  18: [[0, 1, 1, 0], [1, 1, 0, 0], [0, 1, 0, 1], [1, 1, 1, 0]],
+  19: [[0, 1, 1, 1], [0, 1, 1, 0], [1, 0, 1, 0], [1, 1, 1, 1]],
+  20: [[1, 0, 0, 0], [0, 1, 1, 0], [1, 0, 0, 0], [1, 0, 1, 1]],
+  21: [[1, 0, 1, 1], [0, 0, 0, 0], [0, 0, 1, 0], [1, 0, 1, 1]],
+  22: [[1, 1, 0, 0], [1, 1, 0, 0], [1, 1, 0, 1], [0, 1, 0, 1]],
+  23: [[1, 1, 0, 1], [1, 1, 0, 1], [1, 0, 0, 0], [0, 0, 1, 0]],
+  24: [[1, 1, 1, 1], [1, 1, 1, 0], [0, 1, 0, 0], [0, 1, 1, 1]],
+  25: [[1, 0, 0, 1], [0, 1, 0, 0], [0, 1, 1, 1], [0, 0, 0, 1]],
+  26: [[1, 0, 1, 0], [1, 1, 0, 0], [1, 1, 1, 0], [0, 1, 0, 0]],
+  27: [[1, 0, 1, 0], [0, 1, 0, 1], [0, 1, 0, 1], [0, 1, 0, 0]],
+  28: [[0, 0, 1, 0], [0, 0, 0, 1], [0, 0, 1, 0], [0, 0, 1, 1]],
+  29: [[0, 0, 1, 1], [0, 1, 0, 0], [0, 1, 1, 0], [1, 1, 1, 1]],
+  30: [[0, 1, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 1, 0, 1]],
+  31: [[0, 1, 0, 1], [0, 1, 1, 1], [1, 0, 1, 1], [0, 0, 1, 0]],
+  32: [[1, 0, 0, 1], [1, 1, 1, 0], [1, 1, 0, 0], [1, 1, 1, 1]],
+  33: [[1, 1, 1, 1], [0, 0, 0, 0], [1, 1, 0, 0], [1, 0, 1, 1]],
+  34: [[0, 0, 0, 0], [1, 0, 0, 0], [1, 0, 1, 0], [1, 1, 1, 0]],
+  35: [[0, 0, 0, 0], [1, 0, 0, 1], [0, 0, 1, 0], [1, 0, 0, 1]],
+  36: [[0, 0, 0, 1], [1, 0, 0, 0], [0, 1, 1, 1], [0, 1, 0, 1]],
+  37: [[0, 0, 0, 0], [0, 1, 0, 0], [1, 1, 1, 1], [1, 1, 1, 1]],
+  38: [[0, 0, 0, 0], [1, 1, 0, 1], [1, 1, 1, 1], [0, 1, 1, 0]],
+  39: [[0, 0, 0, 1], [1, 1, 0, 0], [0, 1, 0, 1], [1, 0, 1, 0]],
+  40: [[0, 0, 0, 1], [0, 1, 1, 1], [0, 0, 0, 1], [1, 0, 0, 0]],
+  41: [[0, 0, 1, 0], [1, 0, 1, 0], [0, 0, 1, 0], [1, 0, 0, 0]],
+  42: [[0, 0, 1, 1], [0, 0, 1, 0], [1, 0, 0, 0], [1, 1, 0, 0]],
+  43: [[0, 0, 1, 1], [1, 0, 0, 0], [1, 0, 1, 1], [0, 0, 1, 0]],
+  44: [[0, 0, 1, 0], [0, 1, 0, 0], [1, 1, 1, 0], [1, 0, 0, 0]],
+  45: [[0, 0, 1, 0], [1, 1, 1, 0], [1, 1, 1, 0], [1, 0, 1, 1]],
+  46: [[0, 0, 1, 0], [1, 1, 0, 1], [0, 0, 1, 1], [1, 1, 1, 1]],
+  47: [[0, 1, 0, 0], [1, 0, 1, 1], [0, 1, 1, 0], [0, 1, 0, 0]],
+  48: [[0, 1, 0, 1], [0, 0, 0, 0], [0, 0, 1, 0], [1, 1, 1, 0]],
+  49: [[0, 1, 0, 1], [0, 0, 0, 0], [0, 0, 0, 1], [0, 0, 1, 1]],
 };
 
 /**
@@ -306,14 +238,24 @@ export const CAD_BOARD_SPECIFICATION = {
   ]
 };
 
+export interface MarkerDecodeResult {
+  id: number;
+  rotationDeg: number;
+  rotCwStepsNeeded: number;
+  hammingDistance: number;
+}
+
 /**
- * Digital ArUco DICT_4X4_50 Decoder
+ * Digital ArUco DICT_4X4_50 Decoder with optional 1-bit Hamming error correction.
  * Verifies that a 6x6 marker grid has:
  * 1. A pure 1-bit black border (perimeter cells == 0)
- * 2. An inner 4x4 data matrix matching the registered OpenCV dictionary
- * 3. Returns the decoded ID and rotation (0°, 90°, 180°, 270°) or null if invalid
+ * 2. An inner 4x4 data matrix matching OpenCV DICT_4X4_50 (min Hamming distance = 4)
+ * 3. Returns { id, rotationDeg, rotCwStepsNeeded, hammingDistance } or null if invalid
  */
-export function decodeMarkerGrid(grid: number[][]): { id: number; rotationDeg: number } | null {
+export function decodeMarkerGridWithConfidence(
+  grid: number[][],
+  maxErrorBits: number = 0
+): MarkerDecodeResult | null {
   if (!grid || grid.length !== 6 || grid.some(row => row.length !== 6)) {
     return null;
   }
@@ -345,32 +287,66 @@ export function decodeMarkerGrid(grid: number[][]): { id: number; rotationDeg: n
     return res;
   };
 
-  const areMatricesEqual = (a: number[][], b: number[][]): boolean => {
+  const hammingDistance = (a: number[][], b: number[][]): number => {
+    let diff = 0;
     for (let r = 0; r < 4; r++) {
       for (let c = 0; c < 4; c++) {
-        if (a[r][c] !== b[r][c]) return false;
+        if (a[r][c] !== b[r][c]) diff++;
       }
     }
-    return true;
+    return diff;
   };
 
-  // Test 4 possible rotations: 0, 90, 180, 270 degrees
+  // Test 4 possible rotations: 0, 90, 180, 270 degrees CW corrections
   let currentMat = inner;
   const rotations = [0, 90, 180, 270];
+  let bestMatch: MarkerDecodeResult | null = null;
+  let secondBestDist = 99;
 
   for (let rotIdx = 0; rotIdx < 4; rotIdx++) {
     for (const [idStr, dictBits] of Object.entries(ARUCO_DICT_4X4_50_BITS)) {
-      if (areMatricesEqual(currentMat, dictBits)) {
+      const dist = hammingDistance(currentMat, dictBits);
+      if (dist === 0) {
         return {
           id: Number(idStr),
-          rotationDeg: rotations[rotIdx]
+          rotationDeg: rotations[rotIdx],
+          rotCwStepsNeeded: rotIdx,
+          hammingDistance: 0,
         };
+      }
+      if (dist <= maxErrorBits) {
+        if (!bestMatch || dist < bestMatch.hammingDistance) {
+          if (bestMatch) secondBestDist = Math.min(secondBestDist, bestMatch.hammingDistance);
+          bestMatch = {
+            id: Number(idStr),
+            rotationDeg: rotations[rotIdx],
+            rotCwStepsNeeded: rotIdx,
+            hammingDistance: dist,
+          };
+        } else {
+          secondBestDist = Math.min(secondBestDist, dist);
+        }
       }
     }
     currentMat = rotate90(currentMat);
   }
 
+  // Accept 1-bit corrected match only if unambiguously closest (minDist in DICT_4X4_50 is 4)
+  if (bestMatch && (secondBestDist - bestMatch.hammingDistance >= 2 || secondBestDist === 99)) {
+    return bestMatch;
+  }
+
   return null;
+}
+
+/**
+ * Digital ArUco DICT_4X4_50 Decoder
+ * Verifies strict 1-bit black border and exact inner 4x4 match against OpenCV DICT_4X4_50.
+ */
+export function decodeMarkerGrid(grid: number[][]): { id: number; rotationDeg: number } | null {
+  const res = decodeMarkerGridWithConfidence(grid, 0);
+  if (!res) return null;
+  return { id: res.id, rotationDeg: res.rotationDeg };
 }
 
 /**
