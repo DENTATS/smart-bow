@@ -1,26 +1,32 @@
 /**
- * SmartBow AI - 10-State Optical Diagnostic State Machine
- * 
- * Replaces ambiguous "Mode: none" / unhandled tracking states with explicit, actionable
- * engineering diagnostics. Gating rules prevent measurements from being recorded when
- * calibration, optical visibility, or physical marker print scaling is unverified.
- * 
+ * SmartBow AI - Optical Diagnostic State Machine
+ *
+ * Explicit, actionable engineering diagnostics gating capture when camera,
+ * contactless natural face tracking, dental-rim ArUco fiducials, calibration,
+ * or print scaling prerequisites are unverified.
+ *
+ * Architectural Note:
+ * - Natural facial anatomy (MediaPipe landmarks #10 Glabella, #234 R-Zygoma, #454 L-Zygoma)
+ *   provides the contactless cranial reference frame (NO physical skin-adhesive facial ArUco markers).
+ * - Physical ArUco fiducials (DICT_4X4_50) are restricted on the patient to:
+ *   Maxillary rim (IDs 3, 4, 5, 6) and Mandibular rim (IDs 7, 8, 9, 10).
+ *
  * Research Prototype Notice:
  * READY_FOR_ENGINEERING_TEST indicates optical detection and calibration prerequisites
  * are satisfied for technical testing. It does NOT establish clinical accuracy or diagnostic validity.
  */
 
 import { OpticalDiagnosticState, OpticalDiagnosticInfo } from '../types/smartbow';
+import type { ArucoFrameDiagnostics } from './arucoDetector';
 
 export interface OpticalDiagnosticInput {
   cameraActive: boolean;
   cameraError: string | null;
   mode: 'SIMULATION' | 'WEBCAM';
-  faceDetected: boolean;
-  faceMarkersComplete: boolean;     // Group 1: Landmarks 10, 234, 454 or F01, F02, F03
-  arucoDetected: boolean;          // Any ArUco markers seen
-  maxillaryComplete: boolean;       // Group 2: IDs 3, 4, 5, 6
-  mandibularComplete: boolean;      // Group 3: IDs 7, 8, 9, 10
+  faceDetected: boolean;            // Natural contactless MediaPipe facial tracking
+  arucoDetected: boolean;           // Any physical ArUco markers seen
+  maxillaryComplete: boolean;       // Maxillary rim array: IDs 3, 4, 5, 6
+  mandibularComplete: boolean;      // Mandibular rim array: IDs 7, 8, 9, 10
   cameraCalibrated: boolean;        // Verified focal length & principal point
   markerSizeVerified: boolean;      // Physical 100mm caliper print scale confirmed
   trackingStable?: boolean;         // Low jitter/movement
@@ -42,44 +48,37 @@ export const OPTICAL_DIAGNOSTIC_DEFINITIONS: Record<OpticalDiagnosticState, {
     engineeringTestAllowed: false,
   },
   FACE_NOT_DETECTED: {
-    title: 'Patient Face Not In Frame',
+    title: 'Natural Facial Reference Not Detected',
     severity: 'WARNING',
-    actionableGuidance: 'Position patient directly in frame 35–50 cm away under uniform operatory lighting. Clear hair from forehead and zygomatic arches.',
-    missingPrerequisites: ['Primary facial landmark mesh acquisition'],
+    actionableGuidance: 'Position patient face directly in frame 35–50 cm away under uniform operatory lighting for contactless anatomical landmark tracking.',
+    missingPrerequisites: ['Contactless natural facial landmark reference (#10 Glabella, #234/#454 Zygoma)'],
     engineeringTestAllowed: false,
   },
   NO_ARUCO_MARKERS_DETECTED: {
-    title: 'No ArUco Fiducials Detected',
+    title: 'No Dental Rim ArUco Fiducials Detected',
     severity: 'WARNING',
-    actionableGuidance: 'Ensure physical ArUco marker plates (18×18 mm) are mounted on occlusal rims and not obscured by lips, fingers, or saliva.',
-    missingPrerequisites: ['Maxillary and mandibular fiducial marker boards in camera optical FOV'],
-    engineeringTestAllowed: false,
-  },
-  FACE_MARKERS_INCOMPLETE: {
-    title: 'Facial Reference Plane Incomplete',
-    severity: 'WARNING',
-    actionableGuidance: 'Zygomatic arch or glabella points obscured. Ensure patient head is centered and hair/accessories do not occlude lateral orbital rims.',
-    missingPrerequisites: ['Group 1 facial coordinate frame (F01 Glabella, F02 R-Zygoma, F03 L-Zygoma)'],
+    actionableGuidance: 'Ensure physical ArUco marker plates (18×18 mm, DICT_4X4_50 IDs 3–10) are mounted on the maxillary and mandibular occlusal rims and visible to camera.',
+    missingPrerequisites: ['Maxillary (3–6) and mandibular (7–10) occlusal rim fiducial boards in camera FOV'],
     engineeringTestAllowed: false,
   },
   MAXILLARY_MARKERS_INCOMPLETE: {
     title: 'Maxillary Marker Plate Obscured',
     severity: 'WARNING',
-    actionableGuidance: 'Maxillary right premolar board partially hidden. Retract right buccal cheek or rotate patient 30°–45° anterolaterally.',
-    missingPrerequisites: ['Group 2: Maxillary ArUco array (all 4 fiducials 3, 4, 5, 6 visible)'],
+    actionableGuidance: 'Maxillary right premolar board partially hidden. Retract right buccal cheek or rotate camera 30°–45° anterolaterally.',
+    missingPrerequisites: ['Maxillary ArUco array (all 4 fiducials 3, 4, 5, 6 visible)'],
     engineeringTestAllowed: false,
   },
   MANDIBULAR_MARKERS_INCOMPLETE: {
     title: 'Mandibular Marker Plate Obscured',
     severity: 'WARNING',
     actionableGuidance: 'Mandibular right premolar board partially hidden. Verify rim stability, retract lower lip, and avoid inter-occlusal shadowing.',
-    missingPrerequisites: ['Group 3: Mandibular ArUco array (all 4 fiducials 7, 8, 9, 10 visible)'],
+    missingPrerequisites: ['Mandibular ArUco array (all 4 fiducials 7, 8, 9, 10 visible)'],
     engineeringTestAllowed: false,
   },
   CAMERA_NOT_CALIBRATED: {
     title: 'Optical Intrinsics Uncalibrated',
     severity: 'WARNING',
-    actionableGuidance: 'Sensor focal length and principal point unverified. Run optical calibration with standard checkerboard or known reference scale.',
+    actionableGuidance: 'Sensor focal length and principal point unverified. Run optical calibration with the 3×3 calibration card (IDs 20–28).',
     missingPrerequisites: ['Pinhole camera intrinsic matrix [fx, fy, cx, cy] with radial distortion coefficients [k1, k2]'],
     engineeringTestAllowed: false,
   },
@@ -100,31 +99,31 @@ export const OPTICAL_DIAGNOSTIC_DEFINITIONS: Record<OpticalDiagnosticState, {
   READY_FOR_ENGINEERING_TEST: {
     title: 'Optical Prerequisites Met (Engineering Test Ready)',
     severity: 'READY',
-    actionableGuidance: 'All optical, facial, and fiducial prerequisites locked. Recording enabled for engineering/bench validation. NOTE: Prototype is experimental and not clinically validated.',
+    actionableGuidance: 'Natural facial reference and maxillary/mandibular rim fiducials locked. Recording enabled for engineering validation (experimental prototype).',
     missingPrerequisites: [],
     engineeringTestAllowed: true,
   },
 };
 
 /**
- * Evaluates the full tracking environment and produces an authoritative 10-state diagnostic.
+ * Evaluates the full tracking environment and produces an authoritative optical diagnostic.
  * Strictest safety rule: Any missing prerequisite or stale telemetry immediately blocks capture.
  */
 export function evaluateOpticalDiagnostic(input: OpticalDiagnosticInput): OpticalDiagnosticInfo {
   let state: OpticalDiagnosticState;
   let customGuidance: string | undefined;
 
-  // Stale measurement guard: telemetry older than 500ms indicates dropped frames or frozen pipeline
   const isStale = input.telemetryAgeMs !== undefined && input.telemetryAgeMs > 500;
 
   if (!input.cameraActive && input.mode === 'WEBCAM') {
     state = 'CAMERA_NOT_AVAILABLE';
+    if (input.cameraError) {
+      customGuidance = input.cameraError;
+    }
   } else if (!input.faceDetected) {
     state = 'FACE_NOT_DETECTED';
   } else if (!input.arucoDetected) {
     state = 'NO_ARUCO_MARKERS_DETECTED';
-  } else if (!input.faceMarkersComplete) {
-    state = 'FACE_MARKERS_INCOMPLETE';
   } else if (!input.maxillaryComplete) {
     state = 'MAXILLARY_MARKERS_INCOMPLETE';
   } else if (!input.mandibularComplete) {
@@ -198,11 +197,12 @@ export interface LiveArucoDiagnosticStatus {
   guidance: string;
   cameraLabel: string;
   arucoStatusLabel: string;
+  faceTrackingStatus: 'DETECTED' | 'NOT_DETECTED';
   dictionary: 'DICT_4X4_50';
   detectedCount: number;
   detectedIds: number[];
   missingClinicalIds: number[];
-  faceGroupStatus: { detectedIds: number[]; missingIds: number[]; status: 'COMPLETE' | 'PARTIAL' | 'MISSING' };
+  qualityWarnings: string[];
   maxillaGroupStatus: { detectedIds: number[]; missingIds: number[]; status: 'COMPLETE' | 'PARTIAL' | 'MISSING' };
   mandibleGroupStatus: { detectedIds: number[]; missingIds: number[]; status: 'COMPLETE' | 'PARTIAL' | 'MISSING' };
 }
@@ -211,14 +211,15 @@ export interface LiveArucoDiagnosticInput {
   cameraActive: boolean;
   cameraPoweredOn: boolean;
   cameraError: string | null;
-  frameDiag: import('./arucoDetector').ArucoFrameDiagnostics | null;
+  frameDiag: ArucoFrameDiagnostics | null;
   detectedIds: number[];
   expectedIds?: number[];
+  faceDetected?: boolean;
 }
 
-const CLINICAL_FACE_IDS = [0, 1, 2];
-const CLINICAL_MAXILLA_IDS = [3, 4, 5, 6];
-const CLINICAL_MANDIBLE_IDS = [7, 8, 9, 10];
+export const CLINICAL_MAXILLA_IDS = [3, 4, 5, 6];
+export const CLINICAL_MANDIBLE_IDS = [7, 8, 9, 10];
+export const CLINICAL_RIM_EXPECTED_IDS = [...CLINICAL_MAXILLA_IDS, ...CLINICAL_MANDIBLE_IDS];
 
 function evalGroup(groupIds: number[], detectedIds: number[]) {
   const det = groupIds.filter(id => detectedIds.includes(id));
@@ -229,19 +230,23 @@ function evalGroup(groupIds: number[], detectedIds: number[]) {
 }
 
 /**
- * Granular 9-condition (+ READY) CV Pipeline Diagnostic Evaluator for live webcam & Marker Test Mode.
+ * Granular CV Pipeline Diagnostic Evaluator for live webcam & Marker Test Mode.
+ * - Strictly decouples natural facial tracking from dental-rim ArUco detection (IDs 3–10).
+ * - Never reports missing facial ArUco markers (IDs 0–2 are not required).
+ * - Always preserves MARKERS_DETECTED when valid markers are decoded, even if quality warnings exist.
  */
 export function evaluateArucoPipelineDiagnostic(
   input: LiveArucoDiagnosticInput
 ): LiveArucoDiagnosticStatus {
   const { cameraActive, cameraPoweredOn, cameraError, frameDiag } = input;
   const detectedIds = input.detectedIds ?? frameDiag?.detectedIds ?? [];
-  const expected = input.expectedIds ?? [...CLINICAL_FACE_IDS, ...CLINICAL_MAXILLA_IDS, ...CLINICAL_MANDIBLE_IDS];
+  const expected = input.expectedIds ?? CLINICAL_RIM_EXPECTED_IDS;
   const missingClinicalIds = expected.filter(id => !detectedIds.includes(id));
 
-  const faceGroupStatus = evalGroup(CLINICAL_FACE_IDS, detectedIds);
   const maxillaGroupStatus = evalGroup(CLINICAL_MAXILLA_IDS, detectedIds);
   const mandibleGroupStatus = evalGroup(CLINICAL_MANDIBLE_IDS, detectedIds);
+  const faceTrackingStatus: 'DETECTED' | 'NOT_DETECTED' = input.faceDetected ? 'DETECTED' : 'NOT_DETECTED';
+  const qualityWarnings = frameDiag?.qualityWarnings ?? [];
 
   const errLower = (cameraError || '').toLowerCase();
   const isPermissionDenied =
@@ -291,9 +296,11 @@ export function evaluateArucoPipelineDiagnostic(
     arucoStatusLabel = 'FRAME ERROR';
   } else if (detectedIds.length > 0) {
     condition = 'MARKERS_DETECTED';
-    severity = 'READY';
+    severity = qualityWarnings.length > 0 ? 'WARNING' : 'READY';
     title = `${detectedIds.length} ArUco Marker${detectedIds.length === 1 ? '' : 's'} Detected (DICT_4X4_50)`;
-    guidance = 'Live perspective-invariant DICT_4X4_50 decoding active. Hold steady to keep fiducials inside FOV.';
+    guidance = qualityWarnings.length > 0
+      ? `Detected [${detectedIds.map(id => `#${id}`).join(', ')}] with quality notice: ${qualityWarnings.join('; ')}.`
+      : 'Live perspective-invariant DICT_4X4_50 decoding active on dental rim fiducials.';
     arucoStatusLabel = 'DETECTED';
   } else if (frameDiag?.failureCategory === 'WRONG_DICTIONARY_OR_ID') {
     condition = 'WRONG_DICTIONARY_OR_ID';
@@ -324,8 +331,8 @@ export function evaluateArucoPipelineDiagnostic(
   } else {
     condition = 'CAMERA_ACTIVE_NO_MARKERS';
     severity = 'WARNING';
-    title = 'Camera Active — No Marker Detected';
-    guidance = 'Hold a printed DICT_4X4_50 marker with white quiet zone 20–50 cm in front of the camera.';
+    title = 'Camera Active — No Dental Rim Markers Detected';
+    guidance = 'Present maxillary (IDs 3–6) or mandibular (IDs 7–10) DICT_4X4_50 marker boards with white quiet zone 20–50 cm in front of the camera.';
     arucoStatusLabel = 'NO MARKERS';
   }
 
@@ -336,13 +343,15 @@ export function evaluateArucoPipelineDiagnostic(
     guidance,
     cameraLabel,
     arucoStatusLabel,
+    faceTrackingStatus,
     dictionary: 'DICT_4X4_50',
     detectedCount: detectedIds.length,
     detectedIds,
     missingClinicalIds,
-    faceGroupStatus,
+    qualityWarnings,
     maxillaGroupStatus,
     mandibleGroupStatus,
   };
 }
+
 

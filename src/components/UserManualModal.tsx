@@ -162,7 +162,7 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
             }`}
           >
             <Gauge className="w-3.5 h-3.5" />
-            <span>10-State Optical Diagnostics</span>
+            <span>9-State Optical Diagnostics</span>
           </button>
           <button
             onClick={() => setActiveSection('overview')}
@@ -449,7 +449,7 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
                         Clinical Execution
                       </span>
                     </div>
-                    <h3 className="text-base font-bold text-white">Camera Positioning &amp; 10-State Optical Diagnostics</h3>
+                    <h3 className="text-base font-bold text-white">Camera Positioning &amp; 9-State Optical Diagnostics</h3>
                     <p className="text-xs text-slate-300 leading-relaxed">
                       Hold the camera 35–50 cm from the patient at occlusal plane level, angled 30°–45° anterolaterally to view both facial landmarks and the buccal marker targets.
                     </p>
@@ -607,7 +607,7 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
               <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                   <div>
-                    <h3 className="text-base font-bold text-white">10-State Optical Diagnostic State Machine</h3>
+                    <h3 className="text-base font-bold text-white">9-State Optical Diagnostic State Machine</h3>
                     <p className="text-xs text-slate-400">Replaces ambiguous &quot;Mode: none&quot; with actionable clinical guidance</p>
                   </div>
                   <span className="text-xs font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">

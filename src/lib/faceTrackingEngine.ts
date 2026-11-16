@@ -11,7 +11,14 @@
  */
 
 import { Point3D, MarkerPose, CameraCalibrationSettings, DataProvenance } from '../types/smartbow';
-import { Matrix4, buildPatientFrame, invertRigidMatrix, transformPoint } from './patientFrame';
+import {
+  Matrix4,
+  buildPatientFrame,
+  estimateFacialPose3D,
+  CalibratedFacialPose3DResult,
+  invertRigidMatrix,
+  transformPoint,
+} from './patientFrame';
 import { calculateOpticalDistanceCm, DEFAULT_CAMERA_CALIBRATION } from './cameraCalibration';
 
 export interface DummyArucoTrackingData {
@@ -77,12 +84,13 @@ export interface FaceTrackingResult {
     isIdealPosition: boolean;
   };
   markerCoverage: {
-    faceFrameLocked: boolean;      // Group 1: Landmarks 10, 234, 454
-    maxillaBoardLocked: boolean;   // Group 2: IDs 3, 4, 5, 6 (Right Premolar Maxillary Rim)
-    mandibleBoardLocked: boolean;  // Group 3: IDs 7, 8, 9, 10 (Right Premolar Mandibular Rim)
-    allThreeGroupsVisible: boolean; // Confirms all 3 before enabling recording
+    faceFrameLocked: boolean;      // Natural facial anatomy (#10, #234, #454) — NO facial ArUco stickers
+    maxillaBoardLocked: boolean;   // Maxillary Rim Target: IDs 3, 4, 5, 6
+    mandibleBoardLocked: boolean;  // Mandibular Rim Target: IDs 7, 8, 9, 10
+    allThreeGroupsVisible: boolean; // Natural face + Maxillary rim + Mandibular rim visible
     statusMessage: string;
   };
+  facialPose3D?: CalibratedFacialPose3DResult;
   softwareSelfCorrection: {
     isInvariantActive: boolean;
     phonePoseIrrelevant: {
@@ -238,7 +246,8 @@ export class RealtimeFaceTracker {
   private prevRawCy: number = 0.45;
   private prevRawRoll: number = 0;
   private lastTremorRmsMm: number = 0.02;
-  private framesSinceLastDetection: number = 0;
+  private framesSinceLastDetection: number = 999;
+  private hasEstablishedFaceLock: boolean = false;
 
   // Frame-to-frame variance & motion sensor monitoring
   private motionHistory: number[] = [];
@@ -292,7 +301,8 @@ export class RealtimeFaceTracker {
     stabilityThresholdMm: number = 0.65,
     externalMotionMagnitude: number = 0,
     autoQualityAdjustment: boolean = true,
-    simulatedIlluminationIRE: number = 140
+    simulatedIlluminationIRE: number = 140,
+    detectedMarkers: MarkerPose[] = []
   ): Promise<FaceTrackingResult> {
     // If not webcam mode or video not ready, return calibrated phantom tracking
     if (!isWebcamMode || !video || video.readyState < 2) {
@@ -400,11 +410,19 @@ export class RealtimeFaceTracker {
           const normR = r / rgbSum;
           const normG = g / rgbSum;
 
-          // Robust multi-spectrum condition (covers Fitzpatrick phototypes I-VI, warm/cool dental operatory LEDs, dark/fair skin tones)
-          const isYCbCrSkin = (Cb >= 60 && Cb <= 165 && Cr >= 105 && Cr <= 200 && Y >= 15);
-          const isRgbSkin = (r > 30 && g > 20 && b > 15 && r >= g * 0.9 && (r - b) >= -10);
-          const isNormRgbSkin = (normR > 0.28 && normG > 0.18);
-          const isSkin = isYCbCrSkin || isRgbSkin || isNormRgbSkin;
+          // Robust multi-spectrum skin condition that strictly rejects neutral black/gray/white paper (ArUco targets)
+          const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+          const isChromaticSkin = chroma > 14 && r > 40 && r > g && r > b;
+          const isYCbCrSkin = isChromaticSkin && Cb >= 72 && Cb <= 135 && Cr >= 132 && Cr <= 178 && Y >= 28;
+          const isWideSkinFallback =
+            isChromaticSkin &&
+            r > 55 &&
+            g > 35 &&
+            b > 20 &&
+            (r - g) >= 8 &&
+            (r - b) >= 15 &&
+            normR > 0.35;
+          const isSkin = isYCbCrSkin || isWideSkinFallback;
 
           if (isSkin) {
             skinMask[pIdx] = 1;
@@ -529,8 +547,8 @@ export class RealtimeFaceTracker {
         }
 
         // Pass 3: Precision Landmark Anchoring inside detected Head Box
-        // If active video has illumination, lock face with high sensitivity
-        if (bestScore > 1.5 || skinPixelCount > (sw * sh * 0.004) || (meanLuminance > 20 && upperSkinCount > 25)) {
+        // Require substantive facial skin region (>2.5% frame & concentrated window peak) or Chromium FaceDetector lock
+        if (isFaceIdentified || (bestScore > 2.8 && upperSkinCount > sw * sh * 0.025)) {
           isFaceIdentified = true;
           const headBoxPx = {
             x1: Math.floor(bestWindow.x * sw),
@@ -632,15 +650,16 @@ export class RealtimeFaceTracker {
       }
     }
 
-    // Adaptive Face Lock & Memory: If detection briefly misses due to quick motion or lighting glint,
-    // gracefully retain previous verified target for up to 30 frames (0.5s)
+    // Brief temporal hysteresis ONLY after a real face lock was previously established
     if (isFaceIdentified) {
+      this.hasEstablishedFaceLock = true;
       this.framesSinceLastDetection = 0;
     } else {
       this.framesSinceLastDetection++;
-      if (this.framesSinceLastDetection < 30) {
-        // Retain lock without losing face markers
+      if (this.hasEstablishedFaceLock && this.framesSinceLastDetection < 10) {
         isFaceIdentified = true;
+      } else {
+        this.hasEstablishedFaceLock = false;
       }
     }
 
@@ -721,18 +740,46 @@ export class RealtimeFaceTracker {
     // dynamicTrackedVdo does not feed back into simulatedVdoMm
     const dynamicTrackedVdo = simulatedVdoMm;
 
-    // Build the dynamic 468 MediaPipe landmarks conforming to the user's real face
-    const landmarks = this.synthesizeDynamicFaceMesh(
-      this.smoothCx,
-      this.smoothCy,
-      this.smoothW,
-      this.smoothH,
-      this.smoothRoll,
-      this.smoothPitch,
-      this.smoothYaw,
-      dynamicTrackedVdo,
-      simulatedTilts
-    );
+    // Build the 468 landmark coordinates only when a live face is genuinely detected (otherwise empty)
+    const landmarks = isFaceIdentified
+      ? this.synthesizeDynamicFaceMesh(
+          this.smoothCx,
+          this.smoothCy,
+          this.smoothW,
+          this.smoothH,
+          this.smoothRoll,
+          this.smoothPitch,
+          this.smoothYaw,
+          dynamicTrackedVdo,
+          simulatedTilts
+        )
+      : [];
+
+    // Estimate 3D cranial pose strictly gated by camera intrinsics calibration & genuine face detection
+    const facialPose3D: CalibratedFacialPose3DResult = isFaceIdentified
+      ? estimateFacialPose3D(
+          landmarks,
+          vw,
+          vh,
+          {
+            isCalibrated: calibrationSettings.isCalibrated,
+            fx: calibrationSettings.fx * (calibrationSettings.scaleFactor || 1),
+            fy: calibrationSettings.fy * (calibrationSettings.scaleFactor || 1),
+            cx: vw / 2,
+            cy: vh / 2,
+          },
+          calibrationSettings.faceBreadthMm
+        )
+      : {
+          metricDepthAvailable: false,
+          poseMethod: 'UNAVAILABLE_2D_ONLY',
+          T_patient: null,
+          tvec: null,
+          rvec: null,
+          depthMeters: null,
+          reprojectionErrorPx: null,
+          warning: 'Face not detected in frame.',
+        };
 
     // 5. Compute Frame Quality Score (0 - 100%) with Active Self-Quality Optimization
     const quality = this.computeFrameQuality(
@@ -755,15 +802,15 @@ export class RealtimeFaceTracker {
       this.smoothCy
     );
 
-    // 7. Validate 3-Group Marker Coverage (Face Frame + Maxilla + Mandible)
-    // Note: V1 webcam mode has NO physical ArUco detection; coverage marks fiducials unavailable
+    // 7. Validate Natural Face Reference + Maxillary (3-6) & Mandibular (7-10) ArUco Rim Coverage
     const coverage = this.computeMarkerCoverage(
-      this.smoothW,
+      isFaceIdentified ? this.smoothW : 0,
       this.smoothCx,
       this.smoothCy,
       this.smoothYaw,
       quality.totalScore,
-      false // webcam mode
+      false,
+      detectedMarkers
     );
 
     // 8. Software Self-Correction calculation
@@ -914,6 +961,7 @@ export class RealtimeFaceTracker {
       selfQualityAdjustment: quality.selfAdjustment,
       positioningGuide: positioning,
       markerCoverage: coverage,
+      facialPose3D,
       softwareSelfCorrection: selfCorrection,
       stabilization,
       calibrationInfo: {
@@ -1346,10 +1394,10 @@ export class RealtimeFaceTracker {
   }
 
   /**
-   * Validates presence of all 3 Marker Groups:
-   * Group 1: Patient Face Frame Reference (Landmarks 10, 234, 454)
-   * Group 2: Maxillary Rim Target (ArUco IDs 3, 4, 5, 6 at right premolar)
-   * Group 3: Mandibular Rim Target (ArUco IDs 7, 8, 9, 10 at right premolar)
+   * Validates presence of SmartBow tracking groups:
+   * - Cranial Reference: Contactless natural facial landmarks (#10, #234, #454) — NO facial ArUco stickers
+   * - Maxillary Rim Target: Physical ArUco IDs 3, 4, 5, 6
+   * - Mandibular Rim Target: Physical ArUco IDs 7, 8, 9, 10
    */
   public computeMarkerCoverage(
     faceWidth: number,
@@ -1357,8 +1405,12 @@ export class RealtimeFaceTracker {
     cy: number,
     yawDeg: number,
     qualityScore: number,
-    isSimulation: boolean = false
+    isSimulation: boolean = false,
+    detectedMarkers: MarkerPose[] = []
   ): FaceTrackingResult['markerCoverage'] {
+    void cx;
+    void cy;
+    void yawDeg;
     if (isSimulation) {
       const faceFrameLocked = faceWidth > 0.15 && qualityScore >= 35;
       return {
@@ -1366,30 +1418,35 @@ export class RealtimeFaceTracker {
         maxillaBoardLocked: faceFrameLocked,
         mandibleBoardLocked: faceFrameLocked,
         allThreeGroupsVisible: faceFrameLocked,
-        statusMessage: faceFrameLocked 
-          ? "Simulation Mode — Synthetic Phantom Landmarks Active"
-          : "Simulator: Tracking Lost"
+        statusMessage: faceFrameLocked
+          ? 'Simulation Mode — Synthetic Phantom Landmarks Active'
+          : 'Simulator: Tracking Lost',
       };
     }
 
-    // In WEBCAM mode (V1 runtime):
-    // Real optical ArUco detection is a stub (returns []) and has not been validated.
-    // Face frame heuristics exist, but maxillary and mandibular physical fiducials are NOT detected.
     const faceFrameLocked = faceWidth > 0.20 && qualityScore >= 45;
-    const maxillaBoardLocked = false;
-    const mandibleBoardLocked = false;
-    const allThreeGroupsVisible = false; // Block capture of fabricated measurements
+    const detectedIds = detectedMarkers.map(m => m.id);
+    const maxillaBoardLocked = [3, 4, 5, 6].every(id => detectedIds.includes(id));
+    const mandibleBoardLocked = [7, 8, 9, 10].every(id => detectedIds.includes(id));
+    const allThreeGroupsVisible = faceFrameLocked && maxillaBoardLocked && mandibleBoardLocked;
 
-    const statusMessage = faceFrameLocked
-      ? "Optical Face Detected — Physical ArUco Boards UNAVAILABLE (V2 Engine Required for Metric Capture)"
-      : "Tracking Lost — Center Face in Camera View";
+    let statusMessage: string;
+    if (allThreeGroupsVisible) {
+      statusMessage = 'Natural Face + Maxillary (3–6) & Mandibular (7–10) ArUco Rims Visible';
+    } else if (!faceFrameLocked && detectedIds.length > 0) {
+      statusMessage = 'Dental Rim ArUco Markers Detected — Natural Face Tracking Lost';
+    } else if (faceFrameLocked) {
+      statusMessage = 'Natural Face Detected — Waiting for Complete Maxillary (3–6) & Mandibular (7–10) Rim ArUco Arrays';
+    } else {
+      statusMessage = 'Tracking Lost — Position Face and/or Dental Rim ArUco Markers in Camera View';
+    }
 
     return {
       faceFrameLocked,
       maxillaBoardLocked,
       mandibleBoardLocked,
       allThreeGroupsVisible,
-      statusMessage
+      statusMessage,
     };
   }
 

@@ -7,9 +7,6 @@
 import { MarkerSpec } from '../types/smartbow';
 
 export const ARUCO_MARKERS_REGISTRY: Record<number, MarkerSpec> = {
-  0: { id: 0, label: 'F01', location: 'Forehead centre', group: 'FACE', description: 'Superior reference point for vertical facial axis' },
-  1: { id: 1, label: 'F02', location: 'Right cheekbone', group: 'FACE', description: 'Right lateral reference for patient coordinate frame' },
-  2: { id: 2, label: 'F03', location: 'Left cheekbone', group: 'FACE', description: 'Left lateral reference for patient coordinate frame' },
   3: { id: 3, label: 'M01', location: 'Maxillary board top-left', group: 'MAXILLA', description: 'Maxillary occlusal rim tracking array corner 1' },
   4: { id: 4, label: 'M02', location: 'Maxillary board top-right', group: 'MAXILLA', description: 'Maxillary occlusal rim tracking array corner 2' },
   5: { id: 5, label: 'M03', location: 'Maxillary board bottom-left', group: 'MAXILLA', description: 'Maxillary occlusal rim tracking array corner 3' },
@@ -31,9 +28,9 @@ export const ARUCO_MARKERS_REGISTRY: Record<number, MarkerSpec> = {
   28: { id: 28, label: 'CAL09', location: 'Calibration card (2,2)', group: 'CALIBRATION', description: 'Camera calibration card 3x3 grid point 9' },
 };
 
-export const FACE_MARKER_IDS = [0, 1, 2];
 export const MAXILLARY_MARKER_IDS = [3, 4, 5, 6];
 export const MANDIBULAR_MARKER_IDS = [7, 8, 9, 10];
+export const CLINICAL_RIM_MARKER_IDS = [...MAXILLARY_MARKER_IDS, ...MANDIBULAR_MARKER_IDS];
 export const HANAU_MARKER_IDS = [11, 12];
 export const CALIBRATION_MARKER_IDS = [20, 21, 22, 23, 24, 25, 26, 27, 28];
 
@@ -42,9 +39,9 @@ export const ARUCO_TOTAL_DICT_SIZE = 50;
 
 /**
  * Registered clinical & bench calibration marker IDs used by SmartBow workflows.
+ * Note: SmartBow uses contactless natural facial landmarks (no physical facial ArUco stickers).
  */
 export const REGISTERED_ARUCO_IDS = new Set<number>([
-  ...FACE_MARKER_IDS,
   ...MAXILLARY_MARKER_IDS,
   ...MANDIBULAR_MARKER_IDS,
   ...HANAU_MARKER_IDS,
@@ -354,7 +351,7 @@ export function decodeMarkerGrid(grid: number[][]): { id: number; rotationDeg: n
  * Optimized layout with zero element collisions and clean ArUco quiet zones:
  * - 100.0 mm Vernier Caliper Scale Verification Bar (±0.2 mm tolerance)
  * - Section 1: Occlusal Rim Target Arrays (18.0 × 18.0 mm) with CAD Datums
- * - Section 2: Facial (F01–F03) & Hanau Articulator (H01–H02) Markers (14.0 × 14.0 mm)
+ * - Section 2: Contactless Cranial Reference Note & Hanau Articulator (H01–H02) Markers (14.0 × 14.0 mm)
  * - Section 3: Camera Intrinsics 3×3 Calibration Card (60.0 × 60.0 mm) with RMS protocol
  * - Clinically verified references (Boucher 12th ed. & Winkler 2nd ed.)
  */
@@ -492,40 +489,21 @@ export function renderFullA4PrintSheetSvg(): string {
     </g>
   </g>
 
-  <!-- Section 2: Facial Reference & Hanau Articulator Reference Markers (14.0 × 14.0 mm) -->
+  <!-- Section 2: Contactless Natural Face Reference & Hanau Articulator Markers (14.0 × 14.0 mm) -->
   <g transform="translate(16, 132)">
     <rect x="0" y="0" width="178" height="44" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="0.4" rx="2" />
-    <text x="6" y="6.5" font-size="2.6" font-weight="800" fill="#0F172A">2. FACIAL &amp; HANAU ARTICULATOR REFERENCE MARKERS (14.0 × 14.0 mm)</text>
-    <text x="6" y="10.2" font-size="1.6" fill="#64748B">Establish cranial reference plane (F01–F03) &amp; mechanical articulator condylar axis registration (H01–H02).</text>
+    <text x="6" y="6.5" font-size="2.6" font-weight="800" fill="#0F172A">2. CRANIAL REFERENCE ARCHITECTURE &amp; HANAU ARTICULATOR MARKERS (14.0 × 14.0 mm)</text>
+    <text x="6" y="10.2" font-size="1.6" fill="#64748B">Contactless natural facial landmark tracking (no facial stickers) &amp; mechanical articulator condylar registration (H01–H02).</text>
 
-    <!-- Sub-card A: Facial Frame Markers -->
+    <!-- Sub-card A: Contactless Natural Face Notice -->
     <g transform="translate(6, 12)">
       <rect x="0" y="0" width="104" height="29" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="0.3" rx="1.5" />
-      <text x="52" y="4.5" font-size="1.4" font-weight="bold" fill="#0369A1" text-anchor="middle">PATIENT CRANIAL REFERENCE FRAME (SKIN ADHESIVE)</text>
-
-      <!-- F01 Forehead -->
-      <g transform="translate(8, 6.0)">
-        <rect x="-1" y="-1" width="16" height="16" class="cut-line" rx="0.5" />
-        ${renderMarkerSvg(0, 14, false)}
-        <text x="7" y="17.5" font-size="1.3" font-weight="bold" fill="#0F172A" text-anchor="middle">F01 · GLABELLA</text>
-        <text x="7" y="19.8" font-size="1.05" fill="#64748B" text-anchor="middle" class="mono">ID: 0 (Forehead)</text>
-      </g>
-
-      <!-- F02 Right Zygoma -->
-      <g transform="translate(42, 6.0)">
-        <rect x="-1" y="-1" width="16" height="16" class="cut-line" rx="0.5" />
-        ${renderMarkerSvg(1, 14, false)}
-        <text x="7" y="17.5" font-size="1.3" font-weight="bold" fill="#0F172A" text-anchor="middle">F02 · R ZYGOMA</text>
-        <text x="7" y="19.8" font-size="1.05" fill="#64748B" text-anchor="middle" class="mono">ID: 1 (R Cheek)</text>
-      </g>
-
-      <!-- F03 Left Zygoma -->
-      <g transform="translate(76, 6.0)">
-        <rect x="-1" y="-1" width="16" height="16" class="cut-line" rx="0.5" />
-        ${renderMarkerSvg(2, 14, false)}
-        <text x="7" y="17.5" font-size="1.3" font-weight="bold" fill="#0F172A" text-anchor="middle">F03 · L ZYGOMA</text>
-        <text x="7" y="19.8" font-size="1.05" fill="#64748B" text-anchor="middle" class="mono">ID: 2 (L Cheek)</text>
-      </g>
+      <text x="52" y="5.5" font-size="1.45" font-weight="bold" fill="#0369A1" text-anchor="middle">CONTACTLESS NATURAL FACIAL REFERENCE (NO SKIN MARKERS)</text>
+      <line x1="6" y1="8.0" x2="98" y2="8.0" stroke="#E2E8F0" stroke-width="0.25" />
+      <text x="6" y="12.2" font-size="1.2" fill="#334155" font-weight="600">• Cranial Patient Frame: Derived contactlessly from natural facial anatomy</text>
+      <text x="6" y="16.2" font-size="1.15" fill="#475569">  Landmarks: Glabella (#10), R-Zygoma (#234), L-Zygoma (#454), Canthi (#33/#263)</text>
+      <text x="6" y="20.2" font-size="1.15" fill="#475569">• Physical ArUco fiducials are placed ONLY on Maxillary (3–6) &amp; Mandibular (7–10) rims</text>
+      <text x="6" y="24.5" font-size="1.15" fill="#047857" font-weight="700">• Skin-adhesive facial stickers (IDs 0–2) are NOT used in SmartBow workflow</text>
     </g>
 
     <!-- Sub-card B: Hanau Articulator Reference Markers -->

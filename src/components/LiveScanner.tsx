@@ -49,6 +49,7 @@ import {
   evaluateOpticalDiagnostic,
   evaluateArucoPipelineDiagnostic,
   LiveArucoDiagnosticStatus,
+  CLINICAL_RIM_EXPECTED_IDS,
 } from '../lib/opticalDiagnostics';
 import { OpticalDiagnosticInfo } from '../types/smartbow';
 import { CameraCalibrationModal } from './CameraCalibrationModal';
@@ -140,26 +141,25 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
   // Calibration settings
   const [calibrationSettings, setCalibrationSettings] = useState<CameraCalibrationSettings>(() => loadCameraCalibration());
 
-  // Truthful Live Optical ArUco Group Statuses (NEVER fall back to face detection)
+  // Truthful Live Optical ArUco & Contactless Natural Face Statuses
   const detectedIds = liveMarkers.map(m => m.id);
-  const faceDetectedCount = [0, 1, 2].filter(id => detectedIds.includes(id)).length;
   const maxillaDetectedCount = [3, 4, 5, 6].filter(id => detectedIds.includes(id)).length;
   const mandibleDetectedCount = [7, 8, 9, 10].filter(id => detectedIds.includes(id)).length;
-  const faceMarkersAllVisible = faceDetectedCount === 3;
   const maxillaryAllVisible = maxillaDetectedCount === 4;
   const mandibularAllVisible = mandibleDetectedCount === 4;
   const hasAnyOpticalMarkers = liveMarkers.length > 0;
+  const faceTrackingDetected = trackingData?.detected ?? false;
 
   const expectedTestIds: number[] =
     testStep === 'SINGLE'
-      ? (testPreset === 'MAXILLA' ? [3] : testPreset === 'MANDIBLE' ? [7] : testPreset === 'CALIBRATION' ? [20] : [0])
+      ? (testPreset === 'MANDIBLE' ? [7] : testPreset === 'CALIBRATION' ? [20] : [3])
       : testPreset === 'MAXILLA'
       ? [3, 4, 5, 6]
       : testPreset === 'MANDIBLE'
       ? [7, 8, 9, 10]
       : testPreset === 'CALIBRATION'
       ? [20, 21, 22, 23, 24, 25, 26, 27, 28]
-      : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+      : CLINICAL_RIM_EXPECTED_IDS;
 
   const arucoPipelineDiag: LiveArucoDiagnosticStatus = evaluateArucoPipelineDiagnostic({
     cameraActive,
@@ -167,7 +167,8 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     cameraError: cameraPermissionError,
     frameDiag,
     detectedIds,
-    expectedIds: isMarkerTestMode ? expectedTestIds : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    expectedIds: isMarkerTestMode ? expectedTestIds : CLINICAL_RIM_EXPECTED_IDS,
+    faceDetected: faceTrackingDetected,
   });
 
   // Optical Diagnostics evaluation (Clinical Shutter Safety Gate)
@@ -177,8 +178,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     mode,
     cameraActive: cameraActive && cameraPoweredOn,
     cameraError: cameraPermissionError,
-    faceDetected: mode === 'SIMULATION' ? (trackingData?.detected ?? false) : ((trackingData?.detected ?? false) || faceDetectedCount > 0),
-    faceMarkersComplete: mode === 'SIMULATION' ? (trackingData?.detected ?? false) : faceMarkersAllVisible,
+    faceDetected: faceTrackingDetected,
     arucoDetected: mode === 'SIMULATION' ? true : hasAnyOpticalMarkers,
     maxillaryComplete: mode === 'SIMULATION' ? true : maxillaryAllVisible,
     mandibularComplete: mode === 'SIMULATION' ? true : mandibularAllVisible,
@@ -405,34 +405,10 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         ctx.fill();
       }
 
-      // 2. Track Frame via RealtimeFaceTracker
-      const tracker = trackerRef.current;
-      const tracking = await tracker.trackFrame(
-        isWebcamReady ? videoRef.current : null,
-        w,
-        h,
-        simVdo,
-        { ml: simTiltML, ap: simTiltAP, midline: simMidline },
-        mode === 'WEBCAM',
-        0,
-        calibrationSettings,
-        simDistance,
-        'DEMO_LOCK',
-        0.65,
-        0,
-        true,
-        simIlluminationIRE
-      );
-
       // Compute UI publish gate ONCE per tick so React state never starves
       const shouldPublishUi = time - lastUiUpdate > 80;
-      if (shouldPublishUi) {
-        lastUiUpdate = time;
-        lastTelemetryTimestampRef.current = Date.now();
-        setTrackingData(tracking);
-      }
 
-      // Real-Time Optical ArUco Marker Detection on live webcam feed (decoupled from face detection)
+      // 2. Real-Time Optical ArUco Marker Detection on live webcam feed (decoupled from face tracking)
       if (isWebcamReady && videoRef.current) {
         if (frameCount % 2 === 0 || liveMarkersRef.current.length === 0) {
           const diag = detectArucoMarkersDetailed(videoRef.current, calibrationSettings);
@@ -457,7 +433,33 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         }
       }
 
-      // 2b. ALWAYS draw real detected ArUco quadrilaterals + IDs in WEBCAM mode (independent of face detection)
+      // 2b. Track Natural Facial Landmarks via RealtimeFaceTracker (receives live rim markers)
+      const tracker = trackerRef.current;
+      const tracking = await tracker.trackFrame(
+        isWebcamReady ? videoRef.current : null,
+        w,
+        h,
+        simVdo,
+        { ml: simTiltML, ap: simTiltAP, midline: simMidline },
+        mode === 'WEBCAM',
+        0,
+        calibrationSettings,
+        simDistance,
+        'DEMO_LOCK',
+        0.65,
+        0,
+        true,
+        simIlluminationIRE,
+        liveMarkersRef.current
+      );
+
+      if (shouldPublishUi) {
+        lastUiUpdate = time;
+        lastTelemetryTimestampRef.current = Date.now();
+        setTrackingData(tracking);
+      }
+
+      // 2c. ALWAYS draw real detected ArUco quadrilaterals + IDs in WEBCAM mode (independent of face detection)
       if (mode === 'WEBCAM' && isWebcamReady && coverTransform && liveMarkersRef.current.length > 0) {
         for (const marker of liveMarkersRef.current) {
           const mappedCorners = mapVideoCornersToCanvas(marker.corners, coverTransform);
@@ -489,9 +491,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           const minY = Math.min(mappedCorners[0].y, mappedCorners[1].y, mappedCorners[2].y, mappedCorners[3].y);
           const minX = Math.min(mappedCorners[0].x, mappedCorners[1].x, mappedCorners[2].x, mappedCorners[3].x);
           const groupTag =
-            marker.id >= 0 && marker.id <= 2
-              ? 'Face'
-              : marker.id >= 3 && marker.id <= 6
+            marker.id >= 3 && marker.id <= 6
               ? 'Maxilla'
               : marker.id >= 7 && marker.id <= 10
               ? 'Mandible'
@@ -499,7 +499,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
               ? 'Hanau'
               : marker.id >= 20 && marker.id <= 28
               ? 'Calib'
-              : '4x4_50';
+              : 'DICT_4X4_50';
           const tag = `ID #${marker.id} · ${groupTag}`;
 
           ctx.font = 'bold 12px monospace';
@@ -562,7 +562,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         ctx.lineTo(fbX + fbW, fbY + fbH - cornerLen);
         ctx.stroke();
 
-        // Glabella F01 (Forehead Center)
+        // Natural Cranial Reference Landmarks: Glabella (#10) & Zygomas (#234 / #454)
         if (tracking.landmarks[10]) {
           const gX = tracking.landmarks[10].x * w;
           const gY = tracking.landmarks[10].y * h;
@@ -577,10 +577,9 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           ctx.fill();
           ctx.font = 'bold 9px monospace';
           ctx.fillStyle = '#67e8f9';
-          ctx.fillText('F01 (Glabella)', gX + 8, gY + 3);
+          ctx.fillText('Glabella (#10)', gX + 8, gY + 3);
         }
 
-        // Right Zygoma F02 & Left Zygoma F03
         if (tracking.landmarks[234]) {
           const zX = tracking.landmarks[234].x * w;
           const zY = tracking.landmarks[234].y * h;
@@ -591,7 +590,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           ctx.stroke();
           ctx.font = 'bold 9px monospace';
           ctx.fillStyle = '#67e8f9';
-          ctx.fillText('F02 (R-Zygoma)', zX - 80, zY + 3);
+          ctx.fillText('R-Zygoma (#234)', zX - 88, zY + 3);
         }
 
         if (tracking.landmarks[454]) {
@@ -604,7 +603,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           ctx.stroke();
           ctx.font = 'bold 9px monospace';
           ctx.fillStyle = '#67e8f9';
-          ctx.fillText('F03 (L-Zygoma)', zX + 8, zY + 3);
+          ctx.fillText('L-Zygoma (#454)', zX + 8, zY + 3);
         }
 
         // Interpupillary Line & Roll Angle
@@ -874,7 +873,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     }
     if (!trackingData?.detected) {
       return {
-        label: 'Aligning Patient Face',
+        label: mode === 'WEBCAM' && hasAnyOpticalMarkers ? 'Markers Detected · Align Face' : 'Aligning Patient Face',
         color: 'bg-amber-500/10 text-amber-300 border-amber-500/30',
         dot: 'bg-amber-400',
       };
@@ -1102,33 +1101,40 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
             {mode === 'WEBCAM' ? (
               <>
                 <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
-                  <span className={`w-2 h-2 rounded-full ${liveMarkers.length > 0 ? 'bg-emerald-400' : 'bg-rose-400'}`} />
-                  <span className="text-slate-300">ARUCO ({ARUCO_DICTIONARY_NAME}):</span>
-                  <span className={liveMarkers.length > 0 ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
-                    {liveMarkers.length > 0 ? `${liveMarkers.length} DETECTED [${detectedIds.join(', ')}]` : arucoPipelineDiag.arucoStatusLabel}
+                  <span className={`w-2 h-2 rounded-full ${faceTrackingDetected ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                  <span className="text-slate-400">FACE TRACKING:</span>
+                  <span className={faceTrackingDetected ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
+                    {arucoPipelineDiag.faceTrackingStatus}
                   </span>
                 </div>
 
                 <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
-                  <span className="text-slate-400">Face (0-2):</span>
-                  <span className={faceMarkersAllVisible ? 'text-emerald-400 font-bold' : faceDetectedCount > 0 ? 'text-amber-400 font-bold' : 'text-slate-400'}>
-                    {faceDetectedCount}/3
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
-                  <span className="text-slate-400">Maxilla (3-6):</span>
+                  <span className="text-slate-400">MAXILLARY ARUCO:</span>
                   <span className={maxillaryAllVisible ? 'text-emerald-400 font-bold' : maxillaDetectedCount > 0 ? 'text-amber-400 font-bold' : 'text-slate-400'}>
                     {maxillaDetectedCount}/4
                   </span>
                 </div>
 
                 <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
-                  <span className="text-slate-400">Mandible (7-10):</span>
+                  <span className="text-slate-400">MANDIBULAR ARUCO:</span>
                   <span className={mandibularAllVisible ? 'text-emerald-400 font-bold' : mandibleDetectedCount > 0 ? 'text-amber-400 font-bold' : 'text-slate-400'}>
                     {mandibleDetectedCount}/4
                   </span>
                 </div>
+
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
+                  <span className={`w-2 h-2 rounded-full ${liveMarkers.length > 0 ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                  <span className="text-slate-300">IDs ({ARUCO_DICTIONARY_NAME}):</span>
+                  <span className={liveMarkers.length > 0 ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
+                    {liveMarkers.length > 0 ? `[${detectedIds.join(', ')}]` : arucoPipelineDiag.arucoStatusLabel}
+                  </span>
+                </div>
+
+                {arucoPipelineDiag.qualityWarnings.length > 0 && (
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-950/70 border border-amber-600/50 text-amber-300">
+                    <span>WARN: {arucoPipelineDiag.qualityWarnings[0]}</span>
+                  </div>
+                )}
 
                 {frameDiag && (
                   <div className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400">
@@ -1224,7 +1230,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                     { id: 'MAXILLA', label: 'Maxilla (3–6)' },
                     { id: 'MANDIBLE', label: 'Mandible (7–10)' },
                     { id: 'CALIBRATION', label: 'Calib Card (20–28)' },
-                    { id: 'CLINICAL_ALL', label: 'All Clinical (0–10)' },
+                    { id: 'CLINICAL_ALL', label: 'Both Rims (3–10)' },
                   ].map(p => (
                     <button
                       key={p.id}
@@ -1245,8 +1251,8 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
               <div className="grid grid-cols-2 gap-1.5 font-mono text-[10px] bg-slate-900/90 p-2 rounded-xl border border-slate-800">
                 <div><span className="text-slate-400">CAMERA: </span><span className="text-white font-bold">{arucoPipelineDiag.cameraLabel}</span></div>
                 <div><span className="text-slate-400">ARUCO: </span><span className={liveMarkers.length > 0 ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{arucoPipelineDiag.arucoStatusLabel}</span></div>
-                <div><span className="text-slate-400">DICT: </span><span className="text-cyan-300 font-bold">{ARUCO_DICTIONARY_NAME}</span></div>
-                <div><span className="text-slate-400">TIME: </span><span className="text-white font-bold">{frameDiag ? `${frameDiag.processingTimeMs.toFixed(1)} ms` : '—'}</span></div>
+                <div><span className="text-slate-400">FACE TRACKING: </span><span className={faceTrackingDetected ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{arucoPipelineDiag.faceTrackingStatus}</span></div>
+                <div><span className="text-slate-400">DICT / TIME: </span><span className="text-cyan-300 font-bold">{ARUCO_DICTIONARY_NAME}</span> <span className="text-slate-400">({frameDiag ? `${frameDiag.processingTimeMs.toFixed(1)} ms` : '—'})</span></div>
                 <div className="col-span-2">
                   <span className="text-slate-400">MARKERS DETECTED: </span>
                   <span className="text-white font-bold">
@@ -1261,7 +1267,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                 </div>
                 {testStep === 'MULTI' && (
                   <div className="col-span-2">
-                    <span className="text-slate-400">MISSING IDs: </span>
+                    <span className="text-slate-400">MISSING TARGET IDs: </span>
                     <span className="text-amber-300">
                       {expectedTestIds.filter(id => !detectedIds.includes(id)).length > 0
                         ? expectedTestIds.filter(id => !detectedIds.includes(id)).map(id => `#${id}`).join(', ')
@@ -1528,18 +1534,18 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                     <div><span className="text-slate-400 block text-[10px]">CAMERA</span><span className="text-white font-bold">{arucoPipelineDiag.cameraLabel}</span></div>
                     <div><span className="text-slate-400 block text-[10px]">ARUCO DETECTION</span><span className={liveMarkers.length > 0 ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{arucoPipelineDiag.arucoStatusLabel}</span></div>
                     <div><span className="text-slate-400 block text-[10px]">DICTIONARY</span><span className="text-cyan-300 font-bold">{ARUCO_DICTIONARY_NAME}</span></div>
-                    <div><span className="text-slate-400 block text-[10px]">MARKERS DETECTED</span><span className="text-white font-bold">{liveMarkers.length} / 11 clinical</span></div>
+                    <div><span className="text-slate-400 block text-[10px]">RIM MARKERS</span><span className="text-white font-bold">{liveMarkers.filter(m => m.id >= 3 && m.id <= 10).length} / 8 rim ({liveMarkers.length} total)</span></div>
                     <div><span className="text-slate-400 block text-[10px]">PROCESSING TIME</span><span className="text-white font-bold">{frameDiag ? `${frameDiag.processingTimeMs.toFixed(1)} ms` : '—'}</span></div>
                     <div><span className="text-slate-400 block text-[10px]">LAST DETECTION</span><span className="text-white font-bold">{lastSuccessDetectionTime ? new Date(lastSuccessDetectionTime).toLocaleTimeString() : 'None'}</span></div>
                   </div>
                   <div className="pt-2 border-t border-slate-800 space-y-1">
                     <div><span className="text-slate-400">DETECTED IDs: </span><span className="text-emerald-300 font-bold">{detectedIds.length > 0 ? detectedIds.map(id => `#${id}`).join(', ') : 'None'}</span></div>
-                    <div><span className="text-slate-400">MISSING IDs (0–10): </span><span className="text-amber-300">{arucoPipelineDiag.missingClinicalIds.length > 0 ? arucoPipelineDiag.missingClinicalIds.map(id => `#${id}`).join(', ') : 'None'}</span></div>
+                    <div><span className="text-slate-400">MISSING RIM IDs (3–10): </span><span className="text-amber-300">{arucoPipelineDiag.missingClinicalIds.length > 0 ? arucoPipelineDiag.missingClinicalIds.map(id => `#${id}`).join(', ') : 'None'}</span></div>
                   </div>
                   <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800 text-[10px]">
                     <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
-                      <span className="text-slate-400 block">Face (0,1,2)</span>
-                      <span className={faceMarkersAllVisible ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{faceDetectedCount}/3 · {arucoPipelineDiag.faceGroupStatus.status}</span>
+                      <span className="text-slate-400 block">Natural Face Tracking</span>
+                      <span className={faceTrackingDetected ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{arucoPipelineDiag.faceTrackingStatus}</span>
                     </div>
                     <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
                       <span className="text-slate-400 block">Maxilla (3–6)</span>
@@ -1550,6 +1556,12 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                       <span className={mandibularAllVisible ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{mandibleDetectedCount}/4 · {arucoPipelineDiag.mandibleGroupStatus.status}</span>
                     </div>
                   </div>
+                  {arucoPipelineDiag.qualityWarnings.length > 0 && (
+                    <div className="pt-2 border-t border-slate-800 text-[10px] text-amber-300">
+                      <span className="font-bold">QUALITY WARNINGS: </span>
+                      <span>{arucoPipelineDiag.qualityWarnings.join(' · ')}</span>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1594,9 +1606,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
                       <tbody className="divide-y divide-slate-800 text-slate-300">
                         {liveMarkers.map(m => {
                           const group =
-                            m.id >= 0 && m.id <= 2
-                              ? 'Face'
-                              : m.id >= 3 && m.id <= 6
+                            m.id >= 3 && m.id <= 6
                               ? 'Maxilla'
                               : m.id >= 7 && m.id <= 10
                               ? 'Mandible'

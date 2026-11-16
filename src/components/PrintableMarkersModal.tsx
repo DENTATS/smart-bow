@@ -100,7 +100,6 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
   const allMarkers = Object.values(ARUCO_MARKERS_REGISTRY);
   const maxillaMarkers = allMarkers.filter(m => m.group === 'MAXILLA');
   const mandMarkers = allMarkers.filter(m => m.group === 'MANDIBLE');
-  const faceMarkers = allMarkers.filter(m => m.group === 'FACE');
   const hanauMarkers = allMarkers.filter(m => m.group === 'HANAU');
 
   // Corrected OpenCV ArUco bit polarity:
@@ -636,30 +635,25 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
                 </div>
               </div>
 
-              {/* Section 2: Facial Reference Markers */}
+              {/* Section 2: Contactless Natural Face & Hanau Articulator References */}
               <div className="space-y-4 pt-2">
                 <div className="border-b border-slate-800 pb-2">
                   <h4 className="text-sm font-bold text-purple-400 uppercase font-mono">
-                    2. Facial Reference Markers (14.0 × 14.0 mm) &amp; Articulator References
+                    2. Contactless Cranial Reference &amp; Hanau Articulator Markers (14.0 × 14.0 mm)
                   </h4>
-                  <p className="text-xs text-slate-400">Establish patient cranial frame (F01–F03) and mechanical articulator registration (H01–H02)</p>
+                  <p className="text-xs text-slate-400">
+                    Natural facial landmarks (#10 Glabella, #234/#454 Zygoma) replace facial skin stickers; physical ArUco H01–H02 mount on the articulator.
+                  </p>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                  <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex flex-col items-center gap-2 text-center">
-                    {renderArucoSvg(0, 14)}
-                    <span className="text-[11px] font-bold text-white font-mono">F01 (ID 0)</span>
-                    <span className="text-[9px] text-slate-400">Glabella / Forehead</span>
-                  </div>
-                  <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex flex-col items-center gap-2 text-center">
-                    {renderArucoSvg(1, 14)}
-                    <span className="text-[11px] font-bold text-white font-mono">F02 (ID 1)</span>
-                    <span className="text-[9px] text-slate-400">Right Zygoma</span>
-                  </div>
-                  <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex flex-col items-center gap-2 text-center">
-                    {renderArucoSvg(2, 14)}
-                    <span className="text-[11px] font-bold text-white font-mono">F03 (ID 2)</span>
-                    <span className="text-[9px] text-slate-400">Left Zygoma</span>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div className="sm:col-span-2 p-3.5 bg-slate-900 border border-cyan-800/50 rounded-xl flex flex-col justify-center gap-1.5">
+                    <span className="text-[11px] font-bold text-cyan-300 font-mono uppercase">
+                      Contactless Natural Face Tracking
+                    </span>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      No skin-adhesive ArUco markers are placed on the patient&apos;s face. SmartBow tracks natural craniofacial anatomy contactlessly via facial landmarks while physical ArUco markers are mounted strictly on the Maxillary (3–6) and Mandibular (7–10) occlusal rims.
+                    </p>
                   </div>
                   <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex flex-col items-center gap-2 text-center">
                     {renderArucoSvg(11, 14)}

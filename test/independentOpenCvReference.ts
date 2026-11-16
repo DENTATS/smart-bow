@@ -34,9 +34,9 @@ function bytesToOpenCv6x6Grid(b0: number, b1: number): number[][] {
 }
 
 const CANONICAL_OPENCV_SPECS: Array<{ id: number; label: string; bytes: [number, number] }> = [
-  { id: 0, label: 'F01 Glabella', bytes: [181, 50] },
-  { id: 1, label: 'F02 Right Zygoma', bytes: [15, 154] },
-  { id: 2, label: 'F03 Left Zygoma', bytes: [51, 45] },
+  { id: 0, label: 'Canonical DICT_4X4_50 ID 0 (Unused on Face)', bytes: [181, 50] },
+  { id: 1, label: 'Canonical DICT_4X4_50 ID 1 (Unused on Face)', bytes: [15, 154] },
+  { id: 2, label: 'Canonical DICT_4X4_50 ID 2 (Unused on Face)', bytes: [51, 45] },
   { id: 3, label: 'Maxillary Right Premolar M1', bytes: [153, 70] },
   { id: 4, label: 'Maxillary Right Premolar M2', bytes: [84, 158] },
   { id: 5, label: 'Maxillary Right Premolar M3', bytes: [121, 205] },

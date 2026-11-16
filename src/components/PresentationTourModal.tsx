@@ -120,7 +120,7 @@ export const PresentationTourModal: React.FC<PresentationTourModalProps> = ({
       keyHighlights: [
         'Camera permission handling with explicit diagnostics for NotAllowedError / busy devices.',
         'Camera device selection (User Front, Environment Rear, External USB HD).',
-        'Truthful tracking: uses genuine optical chromaticity and feature centroid bounding (Glabella F01, Zygomas F02/F03).',
+        'Truthful tracking: uses contactless natural anatomical facial tracking (Glabella #10, Zygomas #234/#454) with no skin ArUco stickers.',
         'Zero-fake-mesh policy: Never fabricates 468 MediaPipe landmarks when unverified.',
         'Real-time illumination (IRE) and FPS telemetry.'
       ],

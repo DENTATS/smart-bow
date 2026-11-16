@@ -60,7 +60,7 @@ export const ROADMAP_MILESTONES: RoadmapMilestone[] = [
     status: 'VALIDATED',
     currentLimitation: 'Early software versions risked displaying simulated or synthesized clinical measurements as real results, with unvalidated "VERIFIED" or "CALIBRATED" labels.',
     whyItMatters: 'Patient safety requires that unverified, simulated, or missing measurements can never be mistaken for real clinical records or used to fabricate a dental prosthesis.',
-    plannedSolution: 'Enforce strict DataProvenance typing (SIMULATED | MEASURED | UNAVAILABLE). Implement 10-state optical diagnostic gating to block capture on tracking loss, incomplete fiducials, or unverified scale. Apply bold warning watermarks to all simulated exports.',
+    plannedSolution: 'Enforce strict DataProvenance typing (SIMULATED | MEASURED | UNAVAILABLE). Implement 9-state optical diagnostic gating to block capture on tracking loss, incomplete rim fiducials, or unverified scale. Apply bold warning watermarks to all simulated exports.',
     testingMethod: 'Automated 92-assertion unit test suite (Test Groups 1–9, 13, 15, and 18) verifying that null inputs produce UNAVAILABLE, synthetic datasets cannot produce a physical PASS, and tracking loss aborts capture.',
     acceptanceCriteria: 'All safety containment tests pass; missing inputs yield UNAVAILABLE without fallback numeric defaults; simulated exports cannot be sealed as physical clinical records.',
     dependencies: 'None (Prerequisite safety foundation).',
@@ -76,7 +76,7 @@ export const ROADMAP_MILESTONES: RoadmapMilestone[] = [
     whyItMatters: 'Physical jaw tracking requires reliable detection of printed fiducial markers under varying dental clinic operatory lighting, camera distances, and angles.',
     plannedSolution: 'Adaptive integral thresholding, Moore-Neighbor contour extraction, 8-DOF planar homography warping, and canonical OpenCV DICT_4X4_50 decoding with viewport cover/mirror coordinate mapping and a live Marker Test Mode.',
     testingMethod: 'Verify decoding against canonical OpenCV DICT_4X4_50 bitmatrices across rotations, perspective tilt, multi-marker arrays, foreign DICT_6X6 rejection, and 1:1 printed PDF cards in live camera Marker Test Mode.',
-    acceptanceCriteria: 'Real printed markers (18x18mm plates, 14x14mm facial, 12x12mm calibration) are detected and correctly identified through the live camera pipeline with zero simulated fallback.',
+    acceptanceCriteria: 'Real printed rim & calibration markers (18x18mm dental rim plates IDs 3–10, 12x12mm calibration card IDs 20–28, Hanau IDs 11–12) are detected and correctly identified through the live camera pipeline alongside contactless natural facial tracking, with zero simulated fallback.',
     dependencies: 'Milestone 0 (Safe Baseline); physical smartphone/webcam operatory test with 100%-scale printed DICT_4X4_50 sheet.',
     evidenceResult: 'Canonical OpenCV DICT_4X4_50 (50 markers), pure-TS perspective raster CV pipeline, and 9-condition diagnostics pass automated tests (Test Groups 10, 11, 14, 22); physical camera verification pending.'
   },

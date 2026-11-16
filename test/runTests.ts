@@ -19,8 +19,8 @@ import { generateSimulatedDemoValidationDataset, computeStatistics, exportValida
 import { generateHanauPrescriptionText, generatePatientCaseJson, generateExocadArticulatorFile } from '../src/lib/exportArticulator';
 import { generateMountingJigStl, generateMarkerCarrierPlateStl } from '../src/lib/stlGenerator';
 import { RealtimeFaceTracker } from '../src/lib/faceTrackingEngine';
-import { Matrix4, createIdentityMatrix, invertRigidMatrix, multiplyRigidMatrices, transformPoint } from '../src/lib/patientFrame';
-import { renderMarkerSvg, renderBoardSvg, renderFullA4PrintSheetSvg, getFullMarkerGrid, decodeMarkerGrid, CAD_BOARD_SPECIFICATION, ARUCO_DICT_4X4_50_BITS, ARUCO_DICTIONARY_NAME } from '../src/lib/arucoDict';
+import { Matrix4, createIdentityMatrix, invertRigidMatrix, multiplyRigidMatrices, transformPoint, estimateFacialPose3D, CANONICAL_3D_FACE_MODEL_M, PATIENT_FRAME_CONVENTION } from '../src/lib/patientFrame';
+import { renderMarkerSvg, renderBoardSvg, renderFullA4PrintSheetSvg, getFullMarkerGrid, decodeMarkerGrid, CAD_BOARD_SPECIFICATION, ARUCO_DICT_4X4_50_BITS, ARUCO_DICTIONARY_NAME, REGISTERED_ARUCO_IDS, CLINICAL_RIM_MARKER_IDS } from '../src/lib/arucoDict';
 import { jsPDF } from 'jspdf';
 import { downloadA4PrintSheetPdf, generateVectorA4Pdf, generateClinicalReportPdf, drawVectorArUcoMarker } from '../src/lib/pdfExport';
 import {
@@ -31,7 +31,7 @@ import {
   mapVideoCornersToCanvas,
 } from '../src/lib/arucoDetector';
 import { SOURCED_RIM_DATUMS } from '../src/lib/prosthodonticLiterature';
-import { evaluateOpticalDiagnostic, checkCaptureReadiness, evaluateArucoPipelineDiagnostic, OPTICAL_DIAGNOSTIC_DEFINITIONS } from '../src/lib/opticalDiagnostics';
+import { evaluateOpticalDiagnostic, checkCaptureReadiness, evaluateArucoPipelineDiagnostic, OPTICAL_DIAGNOSTIC_DEFINITIONS, CLINICAL_RIM_EXPECTED_IDS } from '../src/lib/opticalDiagnostics';
 import { INDEPENDENT_OPENCV_GROUND_TRUTH_MARKERS } from './independentOpenCvReference';
 import { PatientCase, Point3D, ValidationBenchTest, OpticalDiagnosticState } from '../src/types/smartbow';
 
@@ -602,9 +602,9 @@ console.log('\nTest Group 12: CAD Geometry & Sourced Rim Datums Reconciliation')
 }
 
 // -----------------------------------------------------------------------------
-// TEST 13: Phase 1B — 10-State Optical Diagnostics & Capture Safety Gating
+// TEST 13: Phase 1B — 9-State Optical Diagnostics & Capture Safety Gating
 // -----------------------------------------------------------------------------
-console.log('\nTest Group 13: 10-State Optical Diagnostics & Capture Safety Gating');
+console.log('\nTest Group 13: 9-State Optical Diagnostics & Capture Safety Gating');
 {
   // 13a: Missing camera in WEBCAM mode -> CAMERA_NOT_AVAILABLE
   const diagCameraOff = evaluateOpticalDiagnostic({
@@ -612,7 +612,6 @@ console.log('\nTest Group 13: 10-State Optical Diagnostics & Capture Safety Gati
     cameraError: null,
     mode: 'WEBCAM',
     faceDetected: false,
-    faceMarkersComplete: false,
     arucoDetected: false,
     maxillaryComplete: false,
     mandibularComplete: false,
@@ -626,13 +625,12 @@ console.log('\nTest Group 13: 10-State Optical Diagnostics & Capture Safety Gati
     `Received state: ${diagCameraOff.state}`
   );
 
-  // 13b: Face not detected -> FACE_NOT_DETECTED
+  // 13b: Natural face not detected -> FACE_NOT_DETECTED
   const diagFaceOff = evaluateOpticalDiagnostic({
     cameraActive: true,
     cameraError: null,
     mode: 'SIMULATION',
     faceDetected: false,
-    faceMarkersComplete: false,
     arucoDetected: true,
     maxillaryComplete: true,
     mandibularComplete: true,
@@ -642,17 +640,16 @@ console.log('\nTest Group 13: 10-State Optical Diagnostics & Capture Safety Gati
 
   assert(
     diagFaceOff.state === 'FACE_NOT_DETECTED' && diagFaceOff.engineeringTestAllowed === false,
-    '13b: Face absent yields FACE_NOT_DETECTED and gates capture',
+    '13b: Natural face absent yields FACE_NOT_DETECTED and gates capture',
     `Received state: ${diagFaceOff.state}`
   );
 
-  // 13c: ArUco fiducials missing -> NO_ARUCO_MARKERS_DETECTED
+  // 13c: ArUco rim fiducials missing -> NO_ARUCO_MARKERS_DETECTED
   const diagNoAruco = evaluateOpticalDiagnostic({
     cameraActive: true,
     cameraError: null,
     mode: 'SIMULATION',
     faceDetected: true,
-    faceMarkersComplete: true,
     arucoDetected: false,
     maxillaryComplete: false,
     mandibularComplete: false,
@@ -662,7 +659,7 @@ console.log('\nTest Group 13: 10-State Optical Diagnostics & Capture Safety Gati
 
   assert(
     diagNoAruco.state === 'NO_ARUCO_MARKERS_DETECTED' && diagNoAruco.engineeringTestAllowed === false,
-    '13c: ArUco absent yields NO_ARUCO_MARKERS_DETECTED and gates capture',
+    '13c: Rim ArUco absent yields NO_ARUCO_MARKERS_DETECTED and gates capture',
     `Received state: ${diagNoAruco.state}`
   );
 
@@ -672,7 +669,6 @@ console.log('\nTest Group 13: 10-State Optical Diagnostics & Capture Safety Gati
     cameraError: null,
     mode: 'SIMULATION',
     faceDetected: true,
-    faceMarkersComplete: true,
     arucoDetected: true,
     maxillaryComplete: false,
     mandibularComplete: true,
@@ -692,7 +688,6 @@ console.log('\nTest Group 13: 10-State Optical Diagnostics & Capture Safety Gati
     cameraError: null,
     mode: 'SIMULATION',
     faceDetected: true,
-    faceMarkersComplete: true,
     arucoDetected: true,
     maxillaryComplete: true,
     mandibularComplete: true,
@@ -706,13 +701,12 @@ console.log('\nTest Group 13: 10-State Optical Diagnostics & Capture Safety Gati
     `Received state: ${diagUnverifiedPrint.state}`
   );
 
-  // 13f: All prerequisites satisfied -> READY_FOR_ENGINEERING_TEST
+  // 13f: All prerequisites satisfied -> READY_FOR_ENGINEERING_TEST (no facial ArUco required)
   const diagReady = evaluateOpticalDiagnostic({
     cameraActive: true,
     cameraError: null,
     mode: 'SIMULATION',
     faceDetected: true,
-    faceMarkersComplete: true,
     arucoDetected: true,
     maxillaryComplete: true,
     mandibularComplete: true,
@@ -765,7 +759,6 @@ console.log('\nTest Group 15: Optical Diagnostic Gating Hardening & Edge Conditi
     cameraError: null,
     mode: 'SIMULATION' as const,
     faceDetected: true,
-    faceMarkersComplete: true,
     arucoDetected: true,
     maxillaryComplete: true,
     mandibularComplete: true,
@@ -786,19 +779,27 @@ console.log('\nTest Group 15: Optical Diagnostic Gating Hardening & Edge Conditi
     `Received state=${diagStale.state}, canCapture=${readinessStale.canCapture}`
   );
 
-  // 15b: Incomplete facial markers (e.g. glabella/zygoma obscured)
-  const missingFaceMarkersInput = {
+  // 15b: Contactless natural face tracking (zero facial ArUco IDs 0-2) allows capture when rims 3-10 complete
+  const noFacialArucoDiag = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: null,
+    detectedIds: [3, 4, 5, 6, 7, 8, 9, 10],
+    faceDetected: true,
+  });
+  const readinessContactlessFace = checkCaptureReadiness({
     ...staleInput,
     telemetryAgeMs: 16,
-    faceMarkersComplete: false,
-  };
-  const readinessMissingFace = checkCaptureReadiness(missingFaceMarkersInput);
+  });
 
   assert(
-    readinessMissingFace.canCapture === false && 
-    readinessMissingFace.diagnostic.state === 'FACE_MARKERS_INCOMPLETE',
-    '15b: Incomplete facial landmark plane yields FACE_MARKERS_INCOMPLETE and blocks capture',
-    `State=${readinessMissingFace.diagnostic.state}`
+    noFacialArucoDiag.missingClinicalIds.length === 0 &&
+    ![0, 1, 2].some(id => noFacialArucoDiag.missingClinicalIds.includes(id)) &&
+    readinessContactlessFace.canCapture === true &&
+    readinessContactlessFace.diagnostic.state === 'READY_FOR_ENGINEERING_TEST',
+    '15b: Natural face tracking + dental rim IDs [3..10] never reports facial ArUco IDs 0-2 as missing and reaches READY_FOR_ENGINEERING_TEST',
+    `missing=${JSON.stringify(noFacialArucoDiag.missingClinicalIds)}, state=${readinessContactlessFace.diagnostic.state}`
   );
 
   // 15c: Incomplete maxillary array (missing markers on upper rim)
@@ -1300,7 +1301,6 @@ console.log('\nTest Group 21: Patient Workflow Safety, Record Isolation & Camera
     cameraActive: false, // Stopped/Paused
     cameraError: null,
     faceDetected: false,
-    faceMarkersComplete: false,
     arucoDetected: false,
     maxillaryComplete: false,
     mandibularComplete: false,
@@ -1323,7 +1323,6 @@ console.log('\nTest Group 21: Patient Workflow Safety, Record Isolation & Camera
     cameraActive: false,
     cameraError: 'Permission denied. Please allow camera access in browser permissions.',
     faceDetected: false,
-    faceMarkersComplete: false,
     arucoDetected: false,
     maxillaryComplete: false,
     mandibularComplete: false,
@@ -1711,6 +1710,286 @@ console.log('\nTest Group 22: Live ArUco CV Pipeline, Raster ImageData & Failure
     topRowAllBlack && row1MatchesOpenCv && a4PdfRaw.includes('0. g'),
     '22k: Vector PDF renders OpenCV DICT_4X4_50 black border (0. g) and non-inverted bit cells matching canonical bytes',
     `topRow=${JSON.stringify(markerStreamLines.slice(0, 6))}, row1=${JSON.stringify(markerStreamLines.slice(6, 12))}`
+  );
+}
+
+// -----------------------------------------------------------------------------
+// TEST 23: Contactless Natural Face Architecture + Rim-Only ArUco Scenarios
+// -----------------------------------------------------------------------------
+console.log('\nTest Group 23: Contactless Facial Reference, Rim-Only ArUco & 7 Live Scenarios');
+{
+  // 23a: Registry & A4 Print Sheet no longer expect or print facial ArUco IDs 0, 1, 2
+  const a4Sheet = renderFullA4PrintSheetSvg();
+  const faceIdsExcludedFromRegistry =
+    !REGISTERED_ARUCO_IDS.has(0) &&
+    !REGISTERED_ARUCO_IDS.has(1) &&
+    !REGISTERED_ARUCO_IDS.has(2) &&
+    CLINICAL_RIM_MARKER_IDS.length === 8 &&
+    CLINICAL_RIM_EXPECTED_IDS.every(id => id >= 3 && id <= 10);
+
+  assert(
+    faceIdsExcludedFromRegistry &&
+      a4Sheet.includes('CONTACTLESS NATURAL FACIAL REFERENCE') &&
+      !a4Sheet.includes('F01') &&
+      !a4Sheet.includes('F02') &&
+      !a4Sheet.includes('F03'),
+    '23a: Facial ArUco IDs 0-2 removed from clinical registry & A4 sheet (natural facial reference documented instead)',
+    `REGISTERED_ARUCO_IDS=${JSON.stringify([...REGISTERED_ARUCO_IDS])}`
+  );
+
+  // 23b: Scenario 1 — Face visible, no rim markers
+  const s1 = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: null,
+    detectedIds: [],
+    faceDetected: true,
+  });
+  assert(
+    s1.faceTrackingStatus === 'DETECTED' &&
+      s1.maxillaGroupStatus.status === 'MISSING' &&
+      s1.mandibleGroupStatus.status === 'MISSING' &&
+      s1.missingClinicalIds.length === 8 &&
+      ![0, 1, 2].some(id => s1.missingClinicalIds.includes(id)),
+    '23b (Scenario 1): Face visible with no rim markers -> FACE=DETECTED, Maxilla 0/4, Mandible 0/4, IDs 0-2 NOT reported missing',
+    `face=${s1.faceTrackingStatus}, missing=${JSON.stringify(s1.missingClinicalIds)}`
+  );
+
+  // 23c: Scenario 2 — Face visible, maxillary markers only [3,4,5,6]
+  const s2 = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: null,
+    detectedIds: [3, 4, 5, 6],
+    faceDetected: true,
+  });
+  assert(
+    s2.condition === 'MARKERS_DETECTED' &&
+      s2.faceTrackingStatus === 'DETECTED' &&
+      s2.maxillaGroupStatus.status === 'COMPLETE' &&
+      s2.mandibleGroupStatus.status === 'MISSING' &&
+      JSON.stringify(s2.missingClinicalIds) === '[7,8,9,10]',
+    '23c (Scenario 2): Face visible, maxillary markers only [3..6] -> Maxilla COMPLETE, Mandible MISSING, condition=MARKERS_DETECTED',
+    `cond=${s2.condition}, max=${s2.maxillaGroupStatus.status}, mand=${s2.mandibleGroupStatus.status}`
+  );
+
+  // 23d: Scenario 3 — Face visible, mandibular markers only [7,8,9,10]
+  const s3 = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: null,
+    detectedIds: [7, 8, 9, 10],
+    faceDetected: true,
+  });
+  assert(
+    s3.condition === 'MARKERS_DETECTED' &&
+      s3.faceTrackingStatus === 'DETECTED' &&
+      s3.maxillaGroupStatus.status === 'MISSING' &&
+      s3.mandibleGroupStatus.status === 'COMPLETE' &&
+      JSON.stringify(s3.missingClinicalIds) === '[3,4,5,6]',
+    '23d (Scenario 3): Face visible, mandibular markers only [7..10] -> Mandible COMPLETE, Maxilla MISSING, condition=MARKERS_DETECTED',
+    `cond=${s3.condition}, max=${s3.maxillaGroupStatus.status}, mand=${s3.mandibleGroupStatus.status}`
+  );
+
+  // 23e: Scenario 4 — Face and both rim groups visible [3..10]
+  const s4 = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: null,
+    detectedIds: [3, 4, 5, 6, 7, 8, 9, 10],
+    faceDetected: true,
+  });
+  assert(
+    s4.condition === 'MARKERS_DETECTED' &&
+      s4.faceTrackingStatus === 'DETECTED' &&
+      s4.maxillaGroupStatus.status === 'COMPLETE' &&
+      s4.mandibleGroupStatus.status === 'COMPLETE' &&
+      s4.missingClinicalIds.length === 0,
+    '23e (Scenario 4): Face and both rim groups [3..10] visible -> 0 missing rim IDs, both COMPLETE',
+    `missing=${JSON.stringify(s4.missingClinicalIds)}`
+  );
+
+  // 23f: Scenario 5 — Face tracking lost while rim markers remain visible
+  const s5 = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: null,
+    detectedIds: [3, 4, 5, 6, 7, 8, 9, 10],
+    faceDetected: false,
+  });
+  // Also verify neutral-paper face false-positive check: neutral B&W pixel (240,240,240) must NOT trigger skin lock
+  const neutralPaperTracker = new RealtimeFaceTracker() as any;
+  const mockNeutralBuf = new Uint8ClampedArray(160 * 120 * 4);
+  for (let i = 0; i < mockNeutralBuf.length; i += 4) {
+    mockNeutralBuf[i] = 240;
+    mockNeutralBuf[i + 1] = 240;
+    mockNeutralBuf[i + 2] = 240;
+    mockNeutralBuf[i + 3] = 255;
+  }
+  const hasWarmSkin = (r: number, g: number, b: number) => {
+    const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+    return chroma > 14 && r > 40 && r > g && r > b;
+  };
+  assert(
+    s5.condition === 'MARKERS_DETECTED' &&
+      s5.arucoStatusLabel === 'DETECTED' &&
+      s5.faceTrackingStatus === 'NOT_DETECTED' &&
+      s5.maxillaGroupStatus.status === 'COMPLETE' &&
+      !hasWarmSkin(240, 240, 240) &&
+      neutralPaperTracker.hasEstablishedFaceLock === false,
+    '23f (Scenario 5): Face tracking lost -> FACE=NOT_DETECTED while rim markers remain DETECTED (neutral paper does not falsely lock face)',
+    `cond=${s5.condition}, face=${s5.faceTrackingStatus}, lock=${neutralPaperTracker.hasEstablishedFaceLock}`
+  );
+
+  // 23g: Scenario 6 — Individual rim markers occluded (partial [3, 5, 7, 8, 9])
+  const s6 = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: null,
+    detectedIds: [3, 5, 7, 8, 9],
+    faceDetected: true,
+  });
+  assert(
+    s6.condition === 'MARKERS_DETECTED' &&
+      s6.maxillaGroupStatus.status === 'PARTIAL' &&
+      s6.mandibleGroupStatus.status === 'PARTIAL' &&
+      JSON.stringify(s6.maxillaGroupStatus.detectedIds) === '[3,5]' &&
+      JSON.stringify(s6.mandibleGroupStatus.missingIds) === '[10]',
+    '23g (Scenario 6): Partial occlusion [3,5,7,8,9] reports PARTIAL maxilla/mandible with exact detected & missing rim IDs',
+    `max=${JSON.stringify(s6.maxillaGroupStatus)}, mand=${JSON.stringify(s6.mandibleGroupStatus)}`
+  );
+
+  // 23h: Scenario 7 — All markers removed (never reports 0, 1, 2 missing)
+  const s7 = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: null,
+    detectedIds: [],
+    faceDetected: false,
+  });
+  assert(
+    s7.condition === 'CAMERA_ACTIVE_NO_MARKERS' &&
+      s7.detectedCount === 0 &&
+      JSON.stringify(s7.missingClinicalIds) === '[3,4,5,6,7,8,9,10]',
+    '23h (Scenario 7): All markers removed -> CAMERA_ACTIVE_NO_MARKERS, missingClinicalIds=[3..10] only',
+    `cond=${s7.condition}, missing=${JSON.stringify(s7.missingClinicalIds)}`
+  );
+
+  // 23i: Low-contrast valid DICT_4X4_50 marker (contrast=20 < old 26 filter) still detects with non-blocking warning
+  const lowContrastW = 240;
+  const lowContrastH = 240;
+  const lowContrastData = new Uint8ClampedArray(lowContrastW * lowContrastH * 4);
+  for (let i = 0; i < lowContrastData.length; i += 4) {
+    lowContrastData[i] = 165;
+    lowContrastData[i + 1] = 165;
+    lowContrastData[i + 2] = 165;
+    lowContrastData[i + 3] = 255;
+  }
+  const lowGrid = getFullMarkerGrid(6); // Maxillary M4
+  const lowSize = 108;
+  const lowX0 = Math.floor((lowContrastW - lowSize) / 2);
+  const lowY0 = Math.floor((lowContrastH - lowSize) / 2);
+  for (let y = lowY0; y < lowY0 + lowSize; y++) {
+    for (let x = lowX0; x < lowX0 + lowSize; x++) {
+      const c = Math.min(5, Math.floor(((x - lowX0) / lowSize) * 6));
+      const r = Math.min(5, Math.floor(((y - lowY0) / lowSize) * 6));
+      const v = lowGrid[r][c] === 0 ? 145 : 165; // Contrast delta = 20 (< old 26 threshold!)
+      const idx = (y * lowContrastW + x) * 4;
+      lowContrastData[idx] = v;
+      lowContrastData[idx + 1] = v;
+      lowContrastData[idx + 2] = v;
+      lowContrastData[idx + 3] = 255;
+    }
+  }
+  const lowContrastDet = detectArucoMarkersFromImageData({
+    data: lowContrastData,
+    width: lowContrastW,
+    height: lowContrastH,
+  });
+  const lowContrastDiag = evaluateArucoPipelineDiagnostic({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    cameraError: null,
+    frameDiag: lowContrastDet,
+    detectedIds: lowContrastDet.detectedIds,
+    faceDetected: true,
+  });
+  assert(
+    lowContrastDet.detectedIds.includes(6) &&
+      (lowContrastDet.lowContrastMarkerIds?.includes(6) ?? false) &&
+      lowContrastDiag.condition === 'MARKERS_DETECTED' &&
+      lowContrastDiag.arucoStatusLabel === 'DETECTED' &&
+      lowContrastDiag.qualityWarnings.length > 0,
+    '23i: Low-contrast valid DICT_4X4_50 marker (delta=20) decodes cleanly AND keeps MARKERS_DETECTED while emitting non-blocking quality warning',
+    `detectedIds=${JSON.stringify(lowContrastDet.detectedIds)}, warnings=${JSON.stringify(lowContrastDiag.qualityWarnings)}`
+  );
+
+  // 23j: Honest 2D vs Calibrated 3D Facial Pose Estimation (never invent depth from uncalibrated 2D)
+  const testW = 1280;
+  const testH = 720;
+  const fx = 1000;
+  const fy = 1000;
+  const cx = testW / 2;
+  const cy = testH / 2;
+  const trueTz = 0.45; // 45 cm depth
+  const trueTx = 0.02;
+  const trueTy = -0.01;
+  const rollRad = (5 * Math.PI) / 180;
+  const cr = Math.cos(rollRad);
+  const sr = Math.sin(rollRad);
+  const mockLandmarks468 = Array.from({ length: 468 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
+  for (const [idxStr, pt3] of Object.entries(CANONICAL_3D_FACE_MODEL_M)) {
+    const idx = Number(idxStr);
+    // Patient faces camera: camX0 = -pt3.x, camY0 = -pt3.z (up is -Y), camZ0 = -pt3.y (anterior is closer)
+    const cx0 = -pt3.x;
+    const cy0 = -pt3.z;
+    const cz0 = -pt3.y;
+    // Apply 5 deg roll around camera Z
+    const X = cx0 * cr - cy0 * sr + trueTx;
+    const Y = cx0 * sr + cy0 * cr + trueTy;
+    const Z = cz0 + trueTz;
+    mockLandmarks468[idx] = {
+      x: (fx * (X / Z) + cx) / testW,
+      y: (fy * (Y / Z) + cy) / testH,
+      z: cz0,
+    };
+  }
+
+  const uncalPose = estimateFacialPose3D(mockLandmarks468, testW, testH, {
+    isCalibrated: false,
+    fx,
+    fy,
+    cx,
+    cy,
+  });
+  const calPose = estimateFacialPose3D(mockLandmarks468, testW, testH, {
+    isCalibrated: true,
+    fx,
+    fy,
+    cx,
+    cy,
+  });
+
+  assert(
+    PATIENT_FRAME_CONVENTION.cranialLandmarks.glabella === 10 &&
+      PATIENT_FRAME_CONVENTION.usesSkinArucoMarkers === false &&
+      uncalPose.metricDepthAvailable === false &&
+      uncalPose.poseMethod === 'UNAVAILABLE_2D_ONLY' &&
+      uncalPose.T_patient === null &&
+      calPose.metricDepthAvailable === true &&
+      calPose.poseMethod === 'CALIBRATED_3D_MODEL_PNP' &&
+      calPose.depthMeters !== null &&
+      Math.abs(calPose.depthMeters - trueTz) < 0.02 &&
+      (calPose.reprojectionErrorPx ?? 99) < 1.5,
+    '23j: Uncalibrated 2D landmarks report UNAVAILABLE_2D_ONLY (no invented depth); calibrated camera solves 3D anthropometric PnP within 2cm',
+    `uncal=${uncalPose.poseMethod}, calMethod=${calPose.poseMethod}, calDepth=${calPose.depthMeters}, errPx=${calPose.reprojectionErrorPx}`
   );
 }
 

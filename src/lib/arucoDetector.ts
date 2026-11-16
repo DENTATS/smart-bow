@@ -77,6 +77,8 @@ export interface ArucoFrameDiagnostics {
   failureCategory: ArucoFailureCategory;
   markers: MarkerPose[];
   detectedIds: number[];
+  lowContrastMarkerIds?: number[];
+  qualityWarnings?: string[];
 }
 
 export interface ViewportCoverTransform {
@@ -754,7 +756,7 @@ export function detectArucoMarkersFromImageData(
 
     const radius = Math.max(8, Math.round(Math.min(procW, procH) * 0.042));
     const bin = new Uint8Array(procW * procH);
-    const adaptiveC = 7;
+    const adaptiveC = 5;
 
     for (let y = 1; y < procH - 1; y++) {
       const y0 = Math.max(0, y - radius);
@@ -773,7 +775,7 @@ export function detectArucoMarkersFromImageData(
           integral[intY0 + x0];
         const localMean = boxSum / count;
         const val = lum[rowOffset + x];
-        if (val < localMean - adaptiveC && val < 236) {
+        if (val < localMean - adaptiveC && val < 248) {
           bin[rowOffset + x] = 1;
         }
       }
@@ -911,7 +913,8 @@ export function detectArucoMarkersFromImageData(
         if (v > cellMax) cellMax = v;
       }
       const cellContrast = cellMax - cellMin;
-      if (cellContrast < 26) {
+      // Only discard mathematically flat noise (< 6 gray levels); never reject valid low-contrast markers
+      if (cellContrast < 6) {
         rejectedLowContrastCount++;
         continue;
       }
@@ -938,7 +941,7 @@ export function detectArucoMarkersFromImageData(
 
       // Strict 1-bit black border validation: reject corrupted/partially obscured borders
       if (borderOnes > 0) {
-        if (borderOnes <= 12 && cellContrast >= 32) {
+        if (borderOnes <= 12 && cellContrast >= 12) {
           rejectedBorderCorruptedCount++;
         }
         continue;
@@ -969,7 +972,7 @@ export function detectArucoMarkersFromImageData(
       const decoded = decodeMarkerGridWithConfidence(grid, allowError);
 
       if (!decoded || !(decoded.id in ARUCO_DICT_4X4_50_BITS)) {
-        if (cellContrast >= 35) {
+        if (cellContrast >= 12) {
           rejectedWrongDictOrInvalidIdCount++;
         }
         continue;
@@ -1024,6 +1027,7 @@ export function detectArucoMarkersFromImageData(
     const markers: MarkerPose[] = [];
     const seenIds = new Set<number>();
     const acceptedCenters: { x: number; y: number; radius: number }[] = [];
+    const lowContrastMarkerIds: number[] = [];
 
     for (const cand of candidates) {
       if (seenIds.has(cand.id)) continue;
@@ -1037,6 +1041,9 @@ export function detectArucoMarkersFromImageData(
 
       seenIds.add(cand.id);
       acceptedCenters.push({ x: cand.center.x, y: cand.center.y, radius: candRadius });
+      if (cand.contrast < 28) {
+        lowContrastMarkerIds.push(cand.id);
+      }
       markers.push({
         id: cand.id,
         corners: cand.corners,
@@ -1047,8 +1054,19 @@ export function detectArucoMarkersFromImageData(
     }
 
     markers.sort((a, b) => a.id - b.id);
+    lowContrastMarkerIds.sort((a, b) => a - b);
 
-    // 6. Classify dominant failure reason when 0 markers detected
+    // 6. Classify dominant failure reason when 0 markers detected; attach non-blocking quality warnings when detected
+    const qualityWarnings: string[] = [];
+    if (lowContrastMarkerIds.length > 0) {
+      qualityWarnings.push(`Low contrast on marker IDs [${lowContrastMarkerIds.join(', ')}] — detected without suppression`);
+    }
+    if (meanLuminance < 55) {
+      qualityWarnings.push('Low scene illumination (< 55 IRE)');
+    } else if (glareRatio > 0.25) {
+      qualityWarnings.push('Specular glare detected on scene (> 25%)');
+    }
+
     let failureCategory: ArucoFailureCategory = 'NONE';
     if (markers.length === 0) {
       if (rejectedWrongDictOrInvalidIdCount > 0) {
@@ -1094,6 +1112,8 @@ export function detectArucoMarkersFromImageData(
       failureCategory,
       markers,
       detectedIds: markers.map((m) => m.id),
+      lowContrastMarkerIds,
+      qualityWarnings,
     };
   } catch (err: any) {
     return {

@@ -21,7 +21,7 @@ export interface TransformationMatrix4x4 {
   elements: number[]; // 16 elements (column-major or row-major)
 }
 
-export type MarkerGroup = 'FACE' | 'MAXILLA' | 'MANDIBLE' | 'HANAU' | 'CALIBRATION';
+export type MarkerGroup = 'MAXILLA' | 'MANDIBLE' | 'HANAU' | 'CALIBRATION';
 
 export interface MarkerSpec {
   id: number;
@@ -237,7 +237,6 @@ export type OpticalDiagnosticState =
   | 'CAMERA_NOT_AVAILABLE'
   | 'FACE_NOT_DETECTED'
   | 'NO_ARUCO_MARKERS_DETECTED'
-  | 'FACE_MARKERS_INCOMPLETE'
   | 'MAXILLARY_MARKERS_INCOMPLETE'
   | 'MANDIBULAR_MARKERS_INCOMPLETE'
   | 'CAMERA_NOT_CALIBRATED'

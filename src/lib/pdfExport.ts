@@ -326,7 +326,7 @@ export function generateVectorA4Pdf(options?: { compress?: boolean }): jsPDF {
   pdf.setTextColor(4, 120, 87);
   pdf.text('• Occlusal Clearance: ≥5.0 mm | Plate Gap: ≥2.0 mm', cadBoxX + 4, cadBoxY + 29.2);
 
-  // --- SECTION 2: FACIAL & HANAU ARTICULATOR REFERENCE MARKERS ---
+  // --- SECTION 2: CONTACTLESS FACIAL ARCHITECTURE & HANAU ARTICULATOR MARKERS ---
   const s2X = 16;
   const s2Y = 132;
   pdf.setFillColor(248, 250, 252);
@@ -337,14 +337,14 @@ export function generateVectorA4Pdf(options?: { compress?: boolean }): jsPDF {
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8);
   pdf.setTextColor(15, 23, 42);
-  pdf.text('2. FACIAL & HANAU ARTICULATOR REFERENCE MARKERS (14.0 × 14.0 mm)', s2X + 6, s2Y + 6.5);
+  pdf.text('2. CRANIAL REFERENCE ARCHITECTURE & HANAU ARTICULATOR MARKERS (14.0 × 14.0 mm)', s2X + 6, s2Y + 6.5);
 
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(5.5);
   pdf.setTextColor(100, 116, 139);
-  pdf.text('Establish cranial reference plane (F01–F03) & mechanical articulator condylar axis registration (H01–H02).', s2X + 6, s2Y + 10.2);
+  pdf.text('Contactless natural facial landmark tracking (no facial stickers) & mechanical articulator condylar registration (H01–H02).', s2X + 6, s2Y + 10.2);
 
-  // Sub-card A: Facial Frame
+  // Sub-card A: Contactless Natural Facial Reference
   pdf.setFillColor(255, 255, 255);
   pdf.setDrawColor(203, 213, 225);
   pdf.rect(s2X + 6, s2Y + 12, 104, 29, 'FD');
@@ -352,58 +352,26 @@ export function generateVectorA4Pdf(options?: { compress?: boolean }): jsPDF {
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(5.2);
   pdf.setTextColor(3, 105, 161);
-  pdf.text('PATIENT CRANIAL REFERENCE FRAME (SKIN ADHESIVE)', s2X + 58, s2Y + 16.5, { align: 'center' });
+  pdf.text('CONTACTLESS NATURAL FACIAL REFERENCE (NO SKIN MARKERS)', s2X + 58, s2Y + 17.5, { align: 'center' });
 
-  // F01 Glabella
-  const f01X = s2X + 14;
-  const f01Y = s2Y + 18;
-  pdf.setDrawColor(2, 132, 199);
-  pdf.setLineDashPattern([1.0, 0.6], 0);
-  pdf.rect(f01X - 1.0, f01Y - 1.0, 16, 16, 'S');
-  pdf.setLineDashPattern([], 0);
-  drawVectorArUcoMarker(pdf, 0, f01X, f01Y, 14);
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(4.8);
-  pdf.setTextColor(15, 23, 42);
-  pdf.text('F01 · GLABELLA', f01X + 7, f01Y + 17.5, { align: 'center' });
-  pdf.setFont('courier', 'normal');
-  pdf.setFontSize(4.2);
-  pdf.setTextColor(100, 116, 139);
-  pdf.text('ID: 0 (Forehead)', f01X + 7, f01Y + 20.0, { align: 'center' });
+  pdf.setDrawColor(226, 232, 240);
+  pdf.setLineWidth(0.25);
+  pdf.line(s2X + 12, s2Y + 20, s2X + 104, s2Y + 20);
 
-  // F02 R Zygoma
-  const f02X = s2X + 48;
-  const f02Y = s2Y + 18;
-  pdf.setDrawColor(2, 132, 199);
-  pdf.setLineDashPattern([1.0, 0.6], 0);
-  pdf.rect(f02X - 1.0, f02Y - 1.0, 16, 16, 'S');
-  pdf.setLineDashPattern([], 0);
-  drawVectorArUcoMarker(pdf, 1, f02X, f02Y, 14);
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(4.8);
-  pdf.setTextColor(15, 23, 42);
-  pdf.text('F02 · R ZYGOMA', f02X + 7, f02Y + 17.5, { align: 'center' });
-  pdf.setFont('courier', 'normal');
-  pdf.setFontSize(4.2);
-  pdf.setTextColor(100, 116, 139);
-  pdf.text('ID: 1 (R Cheek)', f02X + 7, f02Y + 20.0, { align: 'center' });
+  pdf.setFontSize(4.4);
+  pdf.setTextColor(51, 65, 85);
+  pdf.text('• Cranial Patient Frame: Derived contactlessly from natural facial anatomy', s2X + 12, s2Y + 24.2);
 
-  // F03 L Zygoma
-  const f03X = s2X + 82;
-  const f03Y = s2Y + 18;
-  pdf.setDrawColor(2, 132, 199);
-  pdf.setLineDashPattern([1.0, 0.6], 0);
-  pdf.rect(f03X - 1.0, f03Y - 1.0, 16, 16, 'S');
-  pdf.setLineDashPattern([], 0);
-  drawVectorArUcoMarker(pdf, 2, f03X, f03Y, 14);
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(4.8);
-  pdf.setTextColor(15, 23, 42);
-  pdf.text('F03 · L ZYGOMA', f03X + 7, f03Y + 17.5, { align: 'center' });
-  pdf.setFont('courier', 'normal');
+  pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(4.2);
-  pdf.setTextColor(100, 116, 139);
-  pdf.text('ID: 2 (L Cheek)', f03X + 7, f03Y + 20.0, { align: 'center' });
+  pdf.setTextColor(71, 85, 105);
+  pdf.text('  Landmarks: Glabella (#10), R-Zygoma (#234), L-Zygoma (#454), Canthi (#33/#263)', s2X + 12, s2Y + 28.2);
+  pdf.text('• Physical ArUco fiducials are placed ONLY on Maxillary (3–6) & Mandibular (7–10) rims', s2X + 12, s2Y + 32.2);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setTextColor(4, 120, 87);
+  pdf.text('• Skin-adhesive facial stickers (IDs 0–2) are NOT used in SmartBow workflow', s2X + 12, s2Y + 36.5);
 
   // Sub-card B: Hanau Articulator
   const hanauBoxX = s2X + 114;
