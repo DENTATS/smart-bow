@@ -17,7 +17,7 @@
  */
 
 import { OpticalDiagnosticState, OpticalDiagnosticInfo } from '../types/smartbow';
-import type { ArucoFrameDiagnostics } from './arucoDetector';
+import type { ArucoFrameDiagnostics, ArucoCandidateSummary, MarkerQuality } from './arucoDetector';
 
 export interface OpticalDiagnosticInput {
   cameraActive: boolean;
@@ -203,6 +203,8 @@ export interface LiveArucoDiagnosticStatus {
   detectedIds: number[];
   missingClinicalIds: number[];
   qualityWarnings: string[];
+  candidateSummary: ArucoCandidateSummary;
+  markerQualities: MarkerQuality[];
   maxillaGroupStatus: { detectedIds: number[]; missingIds: number[]; status: 'COMPLETE' | 'PARTIAL' | 'MISSING' };
   mandibleGroupStatus: { detectedIds: number[]; missingIds: number[]; status: 'COMPLETE' | 'PARTIAL' | 'MISSING' };
 }
@@ -222,8 +224,9 @@ export const CLINICAL_MANDIBLE_IDS = [7, 8, 9, 10];
 export const CLINICAL_RIM_EXPECTED_IDS = [...CLINICAL_MAXILLA_IDS, ...CLINICAL_MANDIBLE_IDS];
 
 function evalGroup(groupIds: number[], detectedIds: number[]) {
-  const det = groupIds.filter(id => detectedIds.includes(id));
-  const miss = groupIds.filter(id => !detectedIds.includes(id));
+  const uniqueDetected = Array.from(new Set(detectedIds));
+  const det = groupIds.filter(id => uniqueDetected.includes(id));
+  const miss = groupIds.filter(id => !uniqueDetected.includes(id));
   const status: 'COMPLETE' | 'PARTIAL' | 'MISSING' =
     det.length === groupIds.length ? 'COMPLETE' : det.length > 0 ? 'PARTIAL' : 'MISSING';
   return { detectedIds: det, missingIds: miss, status };
@@ -234,12 +237,14 @@ function evalGroup(groupIds: number[], detectedIds: number[]) {
  * - Strictly decouples natural facial tracking from dental-rim ArUco detection (IDs 3–10).
  * - Never reports missing facial ArUco markers (IDs 0–2 are not required).
  * - Always preserves MARKERS_DETECTED when valid markers are decoded, even if quality warnings exist.
+ * - Never describes low pixel resolution as physical occlusion; reports factual candidate counts when 0 markers are found.
  */
 export function evaluateArucoPipelineDiagnostic(
   input: LiveArucoDiagnosticInput
 ): LiveArucoDiagnosticStatus {
   const { cameraActive, cameraPoweredOn, cameraError, frameDiag } = input;
-  const detectedIds = input.detectedIds ?? frameDiag?.detectedIds ?? [];
+  const rawDetectedIds = input.detectedIds ?? frameDiag?.detectedIds ?? [];
+  const detectedIds = Array.from(new Set(rawDetectedIds)).sort((a, b) => a - b);
   const expected = input.expectedIds ?? CLINICAL_RIM_EXPECTED_IDS;
   const missingClinicalIds = expected.filter(id => !detectedIds.includes(id));
 
@@ -247,6 +252,16 @@ export function evaluateArucoPipelineDiagnostic(
   const mandibleGroupStatus = evalGroup(CLINICAL_MANDIBLE_IDS, detectedIds);
   const faceTrackingStatus: 'DETECTED' | 'NOT_DETECTED' = input.faceDetected ? 'DETECTED' : 'NOT_DETECTED';
   const qualityWarnings = frameDiag?.qualityWarnings ?? [];
+  const markerQualities: MarkerQuality[] = frameDiag?.markerQualities ?? [];
+  const candidateSummary: ArucoCandidateSummary = frameDiag?.candidateSummary ?? {
+    quads: frameDiag?.rawQuadsFound ?? 0,
+    rejectedTooSmall: frameDiag?.rejectedTooSmallCount ?? 0,
+    rejectedBorder: frameDiag?.rejectedBorderCorruptedCount ?? 0,
+    rejectedDictionary: frameDiag?.rejectedWrongDictOrInvalidIdCount ?? 0,
+    rejectedFlat: frameDiag?.rejectedLowContrastCount ?? 0,
+  };
+
+  const candidateStatsText = `Candidates [Quads: ${candidateSummary.quads}, TooSmall: ${candidateSummary.rejectedTooSmall}, Border: ${candidateSummary.rejectedBorder}, Dict: ${candidateSummary.rejectedDictionary}, Flat: ${candidateSummary.rejectedFlat}].`;
 
   const errLower = (cameraError || '').toLowerCase();
   const isPermissionDenied =
@@ -306,33 +321,37 @@ export function evaluateArucoPipelineDiagnostic(
     condition = 'WRONG_DICTIONARY_OR_ID';
     severity = 'WARNING';
     title = 'Wrong Dictionary or Unregistered Marker Pattern';
-    guidance = 'Black-bordered square detected, but its inner pattern does not match OpenCV DICT_4X4_50. Print the SmartBow DICT_4X4_50 sheet (not DICT_6X6_250).';
+    guidance = `Black-bordered square detected, but its inner pattern does not match OpenCV DICT_4X4_50. Print the SmartBow DICT_4X4_50 sheet (not DICT_6X6_250). ${candidateStatsText}`;
     arucoStatusLabel = 'DICT MISMATCH';
-  } else if (frameDiag?.failureCategory === 'PARTIALLY_OBSCURED') {
+  } else if (frameDiag?.failureCategory === 'PARTIALLY_OBSCURED' && candidateSummary.rejectedBorder > 0) {
     condition = 'PARTIALLY_OBSCURED';
     severity = 'WARNING';
-    title = 'Marker Partially Obscured / Border Clipped';
-    guidance = 'A candidate square border is broken by glare, shadow, fingers, or edge clipping. Ensure full black border and white quiet zone are unobstructed.';
-    arucoStatusLabel = 'OBSCURED';
+    title = 'Candidate Border Exceeded Error Threshold';
+    guidance = `Candidate quad rejected due to ${candidateSummary.rejectedBorder} border failure(s) (> ${7} white perimeter cells). Ensure full black border and white quiet zone are visible. ${candidateStatsText}`;
+    arucoStatusLabel = 'BORDER REJECTED';
   } else if (frameDiag?.failureCategory === 'MARKER_TOO_SMALL') {
     condition = 'MARKER_TOO_SMALL';
     severity = 'WARNING';
-    title = 'Marker Too Small in Frame';
-    guidance = 'Square candidate is below 12px decoding minimum. Move marker closer (20–45 cm) or print at 100% scale (no Fit-to-Page).';
+    title = 'Marker Resolution Too Small in Frame';
+    guidance = `Square candidate is below minimum pixel size (< 7px side / < 8px bounding box; ${candidateSummary.rejectedTooSmall} small contour(s)). Move camera closer to the 6.5 mm rim markers or use 1920×1080 resolution. ${candidateStatsText}`;
     arucoStatusLabel = 'TOO SMALL';
-  } else if (frameDiag?.failureCategory === 'POOR_LIGHTING_OR_GLARE') {
+  } else if (
+    frameDiag?.failureCategory === 'POOR_LIGHTING_OR_GLARE' &&
+    (frameDiag.meanLuminance < 42 || (frameDiag.glareRatio > 0.35 && candidateSummary.rejectedFlat > 0))
+  ) {
     condition = 'POOR_LIGHTING_OR_GLARE';
     severity = 'WARNING';
-    title = 'Poor Lighting or Specular Glare';
-    guidance = frameDiag.glareRatio > 0.3
-      ? 'Strong paper glare is washing out marker contrast. Tilt card slightly and use diffuse matte paper.'
-      : 'Frame luminance/contrast is too low for thresholding. Increase uniform lighting on the marker.';
-    arucoStatusLabel = 'LOW CONTRAST';
+    const isGlare = frameDiag.glareRatio > 0.35 && candidateSummary.rejectedFlat > 0;
+    title = isGlare ? 'Specular Glare Washing Out Quads' : 'Low Scene Illumination';
+    guidance = isGlare
+      ? `Specular glare ratio (${(frameDiag.glareRatio * 100).toFixed(1)}%) with ${candidateSummary.rejectedFlat} flat quad(s). Tilt marker slightly to eliminate reflection. ${candidateStatsText}`
+      : `Scene mean luminance is ${frameDiag.meanLuminance.toFixed(1)} (< 42 threshold). Increase ambient illumination on the dental rim markers. ${candidateStatsText}`;
+    arucoStatusLabel = isGlare ? 'GLARE' : 'LOW LIGHT';
   } else {
     condition = 'CAMERA_ACTIVE_NO_MARKERS';
     severity = 'WARNING';
     title = 'Camera Active — No Dental Rim Markers Detected';
-    guidance = 'Present maxillary (IDs 3–6) or mandibular (IDs 7–10) DICT_4X4_50 marker boards with white quiet zone 20–50 cm in front of the camera.';
+    guidance = `Present maxillary (IDs 3–6) or mandibular (IDs 7–10) DICT_4X4_50 marker boards with white quiet zone in front of the camera. ${candidateStatsText}`;
     arucoStatusLabel = 'NO MARKERS';
   }
 
@@ -349,6 +368,8 @@ export function evaluateArucoPipelineDiagnostic(
     detectedIds,
     missingClinicalIds,
     qualityWarnings,
+    candidateSummary,
+    markerQualities,
     maxillaGroupStatus,
     mandibleGroupStatus,
   };

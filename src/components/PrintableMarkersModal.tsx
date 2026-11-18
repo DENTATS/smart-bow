@@ -266,6 +266,9 @@ export const PrintableMarkersModal: React.FC<PrintableMarkersModalProps> = ({
             <p className="text-slate-300 text-[11px] leading-relaxed">
               In your printer dialog, ensure <strong>Scale</strong> is explicitly set to <strong>100%</strong> (Actual Size) and page margins are set to <strong>None / Minimum</strong>. Do not select &quot;Fit to Printable Area&quot; or &quot;Shrink to Fit&quot;. A PDF file cannot override printer driver auto-scaling on its own; always confirm actual physical dimensions using the 100.0 mm horizontal and 50.0 mm vertical scale bars and the 20.0 × 20.0 mm verification square with a calibrated caliper before clinical mounting.
             </p>
+            <p className="text-cyan-200 text-[11px] leading-relaxed pt-1 border-t border-rose-500/20">
+              <strong>Optical Resolution &amp; Working-Distance Notice (6.5 mm Rim Fiducials):</strong> The physical dental-rim markers are <strong>6.5 × 6.5 mm</strong> (7.5 mm center pitch on an 18.0 × 18.0 × 3.0 mm plate) and require adequate camera image resolution (1920 × 1080 recommended; minimum 1280 × 720) and close camera positioning so each 6×6 marker spans at least 10–14 pixels per side. Any working-distance guidance (e.g., ~18–35 cm) is <strong>approximate</strong> and depends on your camera&apos;s field of view (FOV), close-focus capability, and actual stream resolution.
+            </p>
           </div>
 
           {activeTab === 'scale_check' && (

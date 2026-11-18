@@ -44,6 +44,28 @@ export const OBJ_PTS_3D: Point3D[] = [
   { x: -MARKER_SIZE_METERS / 2, y: MARKER_SIZE_METERS / 2, z: 0 },
 ];
 
+// ---------------------------------------------------------------------------
+// Phase 1C Small-Marker & Resolution Gate Configuration Block (F1, F2, F3)
+// ---------------------------------------------------------------------------
+/** Minimum outer contour perimeter points for a 6x6 ArUco marker (allows ~7x7 px markers). */
+export const MIN_CONTOUR_POINTS = 12;
+/** Minimum axis-aligned bounding-box width/height in processing pixels. */
+export const MIN_BBOX_PX = 8;
+/** Minimum quadrilateral edge length in processing pixels. */
+export const MIN_SIDE_PX = 7;
+/** Minimum convex quadrilateral area in processing square pixels. */
+export const MIN_AREA_PX2 = 40;
+/** Maximum tolerated white cells among the 20 outer border cells (matches OpenCV 0.35 * 20 = 7). */
+export const MAX_BORDER_ERRORS = 7;
+/** Default maximum processing dimension (allows full 1920x1080 native resolution). */
+export const MAX_PROC_DIM = 1920;
+/** Adaptive fallback processing dimension when sustained 10-frame average exceeds budget. */
+export const ADAPTIVE_FALLBACK_PROC_DIM = 1280;
+/** Minimum processing dimension allowed via automatic performance adaptation. */
+export const MIN_AUTO_PROC_DIM = 960;
+/** Rolling 10-frame processing time budget in milliseconds before stepping down resolution. */
+export const PROC_FRAME_BUDGET_MS = 45;
+
 export type ArucoFailureCategory =
   | 'NONE'
   | 'DETECTOR_INIT_FAILED'
@@ -53,6 +75,43 @@ export type ArucoFailureCategory =
   | 'POOR_LIGHTING_OR_GLARE'
   | 'PARTIALLY_OBSCURED'
   | 'WRONG_DICTIONARY_OR_ID';
+
+/**
+ * Per-marker post-decode optical quality metrics (Phase 4).
+ * Calculated independently from marker detection so decoded markers are never suppressed by quality warnings:
+ * - `sidePx`: Mean edge length of the 4 quadrilateral sides in native source image pixels.
+ * - `cellContrast`: Dynamic range (`cellMax - cellMin`, 0..255) across the 36 homography-warped cells.
+ * - `hamming`: Hamming distance (0 or 1) between the inner 4x4 bit matrix and canonical DICT_4X4_50.
+ * - `borderWhiteCells`: Count of white (1) cells among the 20 outer perimeter border cells (0..MAX_BORDER_ERRORS).
+ * - `sharpness`: Mean absolute luminance difference (0..255) across adjacent contrasting cells in the 6x6 grid.
+ * - `grade`: Calibrated quality tier ('GOOD' | 'LOW' | 'POOR').
+ */
+export interface MarkerQuality {
+  id: number;
+  sidePx: number;
+  cellContrast: number;
+  hamming: number;
+  borderWhiteCells: number;
+  sharpness: number;
+  grade: 'GOOD' | 'LOW' | 'POOR';
+}
+
+/**
+ * Structured candidate rejection summary (Phase 4).
+ * Semantics are mutually exclusive per candidate in pipeline evaluation order:
+ * - `rejectedTooSmall`: Contours/polygons rejected at geometric size gates (MIN_CONTOUR_POINTS, MIN_BBOX_PX, MIN_AREA_PX2, MIN_SIDE_PX) before entering `quads`.
+ * - `quads`: Total convex quadrilateral candidates passing geometric size gates and evaluated via homography.
+ * - `rejectedFlat`: Quads rejected at stage 1 of homography evaluation because `cellContrast < 6` or `innerWhiteCount === 0`.
+ * - `rejectedBorder`: Quads passing stage 1 but rejected at stage 2 because `borderWhiteCells > MAX_BORDER_ERRORS` (or severe border corruption on large markers).
+ * - `rejectedDictionary`: Quads passing stages 1 & 2 but rejected at stage 3 because the inner 4x4 bits do not match DICT_4X4_50.
+ */
+export interface ArucoCandidateSummary {
+  quads: number;
+  rejectedTooSmall: number;
+  rejectedBorder: number;
+  rejectedDictionary: number;
+  rejectedFlat: number;
+}
 
 export interface ArucoFrameDiagnostics {
   dictionary: typeof ARUCO_DICTIONARY_NAME;
@@ -74,10 +133,13 @@ export interface ArucoFrameDiagnostics {
   rejectedLowContrastCount: number;
   rejectedBorderCorruptedCount: number;
   rejectedWrongDictOrInvalidIdCount: number;
+  candidateSummary: ArucoCandidateSummary;
   failureCategory: ArucoFailureCategory;
   markers: MarkerPose[];
   detectedIds: number[];
+  markerQualities: MarkerQuality[];
   lowContrastMarkerIds?: number[];
+  borderWarningMarkerIds?: number[];
   qualityWarnings?: string[];
 }
 
@@ -685,20 +747,28 @@ export function detectArucoMarkersFromImageData(
       rejectedLowContrastCount: 0,
       rejectedBorderCorruptedCount: 0,
       rejectedWrongDictOrInvalidIdCount: 0,
+      candidateSummary: {
+        quads: 0,
+        rejectedTooSmall: 0,
+        rejectedBorder: 0,
+        rejectedDictionary: 0,
+        rejectedFlat: 0,
+      },
       failureCategory: 'FRAME_PROCESSING_FAILED',
       markers: [],
       detectedIds: [],
+      markerQualities: [],
     };
   }
 
   try {
-    const maxDim = options?.maxProcDim ?? 960;
+    const maxDim = options?.maxProcDim ?? MAX_PROC_DIM;
     const procScale = Math.min(1, maxDim / Math.max(srcW, srcH));
     const procW = Math.max(16, Math.round(srcW * procScale));
     const procH = Math.max(16, Math.round(srcH * procScale));
     const calib = normalizeCalibration(calibInput, srcW, srcH);
 
-    // 1. Build grayscale luminance buffer + global lighting statistics
+    // 1. Build grayscale luminance buffer + global lighting statistics (no pre-decode blur per F4)
     const lum = new Uint8Array(procW * procH);
     const data = imageData.data;
     let lumSum = 0;
@@ -754,106 +824,147 @@ export function detectArucoMarkersFromImageData(
       }
     }
 
-    const radius = Math.max(8, Math.round(Math.min(procW, procH) * 0.042));
-    const bin = new Uint8Array(procW * procH);
-    const adaptiveC = 5;
+    // 3. Multi-scale adaptive thresholding & outer contour quadrilateral extraction
+    // Pass A uses a broad window for large/low-contrast markers; Pass B uses a fine OpenCV-style
+    // 11x11 window (radius=5) so 8-16px markers under 0.8px blur or 25° rotation do not bloat into the quiet zone.
+    const broadRadius = Math.max(8, Math.round(Math.min(procW, procH) * 0.042));
+    const thresholdPasses: Array<{ radius: number; adaptiveC: number; countSmallRejects: boolean }> =
+      broadRadius > 6
+        ? [
+            { radius: broadRadius, adaptiveC: 5, countSmallRejects: true },
+            { radius: 5, adaptiveC: 6, countSmallRejects: false },
+          ]
+        : [{ radius: broadRadius, adaptiveC: 5, countSmallRejects: true }];
 
-    for (let y = 1; y < procH - 1; y++) {
-      const y0 = Math.max(0, y - radius);
-      const y1 = Math.min(procH - 1, y + radius);
-      const intY0 = y0 * stride;
-      const intY1 = (y1 + 1) * stride;
-      const rowOffset = y * procW;
-      for (let x = 1; x < procW - 1; x++) {
-        const x0 = Math.max(0, x - radius);
-        const x1 = Math.min(procW - 1, x + radius);
-        const count = (y1 - y0 + 1) * (x1 - x0 + 1);
-        const boxSum =
-          integral[intY1 + x1 + 1] -
-          integral[intY0 + x1 + 1] -
-          integral[intY1 + x0] +
-          integral[intY0 + x0];
-        const localMean = boxSum / count;
-        const val = lum[rowOffset + x];
-        if (val < localMean - adaptiveC && val < 248) {
-          bin[rowOffset + x] = 1;
-        }
-      }
-    }
-
-    // 3. Extract outer contours & approximate quadrilateral candidates
-    const visited = new Uint8Array(procW * procH);
     const quads: [Pt2, Pt2, Pt2, Pt2][] = [];
+    const quadCenters: Array<{ x: number; y: number; side: number }> = [];
     let rejectedTooSmallCount = 0;
 
-    for (let y = 1; y < procH - 1; y++) {
-      const rowOffset = y * procW;
-      for (let x = 1; x < procW - 1; x++) {
-        const p = rowOffset + x;
-        if (bin[p] === 1 && bin[p - 1] === 0 && visited[p] === 0) {
-          const contour = traceOuterContour(bin, visited, procW, procH, x, y);
-          if (contour.length < 16) continue;
+    const bin = new Uint8Array(procW * procH);
+    const visited = new Uint8Array(procW * procH);
 
-          // Compute bounding box & perimeter
-          let minX = procW;
-          let minY = procH;
-          let maxX = 0;
-          let maxY = 0;
-          let perim = 0;
-          for (let i = 0; i < contour.length; i++) {
-            const pt = contour[i];
-            if (pt.x < minX) minX = pt.x;
-            if (pt.y < minY) minY = pt.y;
-            if (pt.x > maxX) maxX = pt.x;
-            if (pt.y > maxY) maxY = pt.y;
-            const next = contour[(i + 1) % contour.length];
-            perim += Math.hypot(next.x - pt.x, next.y - pt.y);
+    for (const pass of thresholdPasses) {
+      bin.fill(0);
+      visited.fill(0);
+      const { radius, adaptiveC, countSmallRejects } = pass;
+
+      for (let y = 1; y < procH - 1; y++) {
+        const y0 = Math.max(0, y - radius);
+        const y1 = Math.min(procH - 1, y + radius);
+        const intY0 = y0 * stride;
+        const intY1 = (y1 + 1) * stride;
+        const rowOffset = y * procW;
+        for (let x = 1; x < procW - 1; x++) {
+          const x0 = Math.max(0, x - radius);
+          const x1 = Math.min(procW - 1, x + radius);
+          const count = (y1 - y0 + 1) * (x1 - x0 + 1);
+          const boxSum =
+            integral[intY1 + x1 + 1] -
+            integral[intY0 + x1 + 1] -
+            integral[intY1 + x0] +
+            integral[intY0 + x0];
+          const localMean = boxSum / count;
+          const val = lum[rowOffset + x];
+          if (val < localMean - adaptiveC && val < 248) {
+            bin[rowOffset + x] = 1;
           }
+        }
+      }
 
-          const bw = maxX - minX;
-          const bh = maxY - minY;
-          if (bw < 6 || bh < 6) continue;
+      for (let y = 1; y < procH - 1; y++) {
+        const rowOffset = y * procW;
+        for (let x = 1; x < procW - 1; x++) {
+          const p = rowOffset + x;
+          if (bin[p] === 1 && bin[p - 1] === 0 && visited[p] === 0) {
+            const contour = traceOuterContour(bin, visited, procW, procH, x, y);
+            if (contour.length < 8) continue;
 
-          // Ignore outer frame-border contour
-          if (bw > procW * 0.94 && bh > procH * 0.94) continue;
-
-          // Too small for reliable 6x6 cell decoding (must be >= ~12px per side)
-          if (bw < 12 || bh < 12) {
-            if (Math.max(bw, bh) / Math.max(1, Math.min(bw, bh)) < 2.2) {
-              rejectedTooSmallCount++;
+            // Compute bounding box & perimeter
+            let minX = procW;
+            let minY = procH;
+            let maxX = 0;
+            let maxY = 0;
+            let perim = 0;
+            for (let i = 0; i < contour.length; i++) {
+              const pt = contour[i];
+              if (pt.x < minX) minX = pt.x;
+              if (pt.y < minY) minY = pt.y;
+              if (pt.x > maxX) maxX = pt.x;
+              if (pt.y > maxY) maxY = pt.y;
+              const next = contour[(i + 1) % contour.length];
+              perim += Math.hypot(next.x - pt.x, next.y - pt.y);
             }
-            continue;
-          }
 
-          let poly = approxClosedPolygon(contour, Math.max(1.5, perim * 0.032));
-          if (poly.length > 4 && poly.length <= 6) {
-            poly = approxClosedPolygon(contour, Math.max(2.0, perim * 0.052));
-          }
-          if (poly.length !== 4) continue;
-          if (!isConvexQuad(poly)) continue;
+            // Pixel span of axis-aligned bounding box (inclusive of boundary pixels)
+            const bw = maxX - minX + 1;
+            const bh = maxY - minY + 1;
+            if (bw < 4 || bh < 4) continue;
 
-          const area = Math.abs(polygonSignedArea(poly));
-          if (area < 120) {
-            rejectedTooSmallCount++;
-            continue;
-          }
+            // Ignore outer frame-border contour
+            if (bw > procW * 0.94 && bh > procH * 0.94) continue;
 
-          const ordered = orderQuadClockwise(poly);
-          const sides = [
-            Math.hypot(ordered[1].x - ordered[0].x, ordered[1].y - ordered[0].y),
-            Math.hypot(ordered[2].x - ordered[1].x, ordered[2].y - ordered[1].y),
-            Math.hypot(ordered[3].x - ordered[2].x, ordered[3].y - ordered[2].y),
-            Math.hypot(ordered[0].x - ordered[3].x, ordered[0].y - ordered[3].y),
-          ];
-          const minSide = Math.min(...sides);
-          const maxSide = Math.max(...sides);
-          if (minSide < 11) {
-            rejectedTooSmallCount++;
-            continue;
-          }
-          if (maxSide / minSide > 4.0) continue;
+            // F1 Gate 1 & 2: MIN_CONTOUR_POINTS (12) and MIN_BBOX_PX (8)
+            if (contour.length < MIN_CONTOUR_POINTS || bw < MIN_BBOX_PX || bh < MIN_BBOX_PX) {
+              if (countSmallRejects && Math.max(bw, bh) / Math.max(1, Math.min(bw, bh)) < 2.2) {
+                rejectedTooSmallCount++;
+              }
+              continue;
+            }
 
-          quads.push(ordered);
+            const minEps = perim < 60 ? 0.85 : 1.5;
+            let poly = approxClosedPolygon(contour, Math.max(minEps, perim * 0.032));
+            if (poly.length !== 4) {
+              const epsMultipliers = [0.045, 0.06, 0.08, 0.1];
+              for (const mult of epsMultipliers) {
+                const candidatePoly = approxClosedPolygon(contour, Math.max(minEps, perim * mult));
+                if (candidatePoly.length === 4) {
+                  poly = candidatePoly;
+                  break;
+                }
+              }
+            }
+            if (poly.length !== 4) continue;
+            if (!isConvexQuad(poly)) continue;
+
+            const ordered = orderQuadClockwise(poly);
+            const sides = [
+              Math.hypot(ordered[1].x - ordered[0].x, ordered[1].y - ordered[0].y),
+              Math.hypot(ordered[2].x - ordered[1].x, ordered[2].y - ordered[1].y),
+              Math.hypot(ordered[3].x - ordered[2].x, ordered[3].y - ordered[2].y),
+              Math.hypot(ordered[0].x - ordered[3].x, ordered[0].y - ordered[3].y),
+            ];
+            const minSide = Math.min(...sides);
+            const maxSide = Math.max(...sides);
+
+            // Effective area and side length accounting for 1px boundary pixel width on small contours
+            const rawArea = Math.abs(polygonSignedArea(ordered));
+            const effectiveArea = Math.max(rawArea, (minSide + 1) * (minSide + 1));
+            const effectiveMinSide = minSide + 0.5;
+
+            // F1 Gate 3 & 4: MIN_AREA_PX2 (40) and MIN_SIDE_PX (7)
+            if (effectiveArea < MIN_AREA_PX2 || effectiveMinSide < MIN_SIDE_PX) {
+              if (countSmallRejects) {
+                rejectedTooSmallCount++;
+              }
+              continue;
+            }
+            if (maxSide / Math.max(1, minSide) > 3.0) continue;
+            const oppRatio02 = Math.max(sides[0], sides[2]) / Math.max(1, Math.min(sides[0], sides[2]));
+            const oppRatio13 = Math.max(sides[1], sides[3]) / Math.max(1, Math.min(sides[1], sides[3]));
+            if (oppRatio02 > 1.55 || oppRatio13 > 1.55) continue;
+
+            // Avoid duplicate quads from Pass B that are nearly identical to Pass A
+            const qc = quadCenter(ordered);
+            const isDupQuad = quadCenters.some(
+              (existing) =>
+                Math.hypot(existing.x - qc.x, existing.y - qc.y) < Math.max(2.5, existing.side * 0.25) &&
+                Math.abs(existing.side - minSide) < Math.max(3.0, existing.side * 0.3)
+            );
+            if (isDupQuad) continue;
+
+            quadCenters.push({ x: qc.x, y: qc.y, side: minSide });
+            quads.push(ordered);
+          }
         }
       }
     }
@@ -868,7 +979,10 @@ export function detectArucoMarkersFromImageData(
       corners: [Point3D, Point3D, Point3D, Point3D];
       center: Point3D;
       hammingDistance: number;
+      borderWhiteCells: number;
       contrast: number;
+      sharpness: number;
+      sidePx: number;
       area: number;
       tvec: [number, number, number];
       rvec: [number, number, number];
@@ -876,123 +990,259 @@ export function detectArucoMarkersFromImageData(
 
     const candidates: ScoredCandidate[] = [];
 
+    // Helper to radially adjust quad vertices relative to quad center for subpixel boundary alignment on small markers
+    const adjustQuadRadially = (q: [Pt2, Pt2, Pt2, Pt2], deltaCornerPx: number): [Pt2, Pt2, Pt2, Pt2] => {
+      if (deltaCornerPx === 0) return q;
+      const c = quadCenter(q);
+      return q.map((pt) => {
+        const dx = pt.x - c.x;
+        const dy = pt.y - c.y;
+        const len = Math.hypot(dx, dy);
+        if (len < 1e-3) return pt;
+        return {
+          x: pt.x + (dx / len) * deltaCornerPx,
+          y: pt.y + (dy / len) * deltaCornerPx,
+        };
+      }) as [Pt2, Pt2, Pt2, Pt2];
+    };
+
     for (const quad of quads) {
-      const H = computeMarkerHomography(quad);
-      if (!H) continue;
+      const qSides = [
+        Math.hypot(quad[1].x - quad[0].x, quad[1].y - quad[0].y),
+        Math.hypot(quad[2].x - quad[1].x, quad[2].y - quad[1].y),
+        Math.hypot(quad[3].x - quad[2].x, quad[3].y - quad[2].y),
+        Math.hypot(quad[0].x - quad[3].x, quad[0].y - quad[3].y),
+      ];
+      const qMinSide = Math.min(...qSides);
+      const qAvgSide = (qSides[0] + qSides[1] + qSides[2] + qSides[3]) * 0.25;
 
-      const cellLum: number[][] = Array.from({ length: 6 }, () => new Array(6).fill(0));
-      const all36Cells: number[] = [];
+      // For small markers (< 32px), integer contour pixels trace pixel centers [x0..x1] which are 0.5px inset
+      // from the continuous outer boundary [x0-0.5..x1+0.5], or slightly bloated under blur.
+      const radialOffsets = qMinSide < 32 ? [0, 0.65, -0.4, 0.35] : [0];
+      const subOffsets = qMinSide < 15 ? [0.38, 0.5, 0.62] : [0.28, 0.5, 0.72];
 
-      // Sample 3x3 sub-points inside [0.28..0.72] of every 6x6 cell
-      const subOffsets = [0.28, 0.5, 0.72];
-      for (let r = 0; r < 6; r++) {
-        for (let c = 0; c < 6; c++) {
-          const samples: number[] = [];
-          for (const dy of subOffsets) {
-            const v = r + dy;
-            for (const dx of subOffsets) {
-              const u = c + dx;
-              const denom = H[6] * u + H[7] * v + H[8];
-              if (Math.abs(denom) < 1e-6) continue;
-              const sx = (H[0] * u + H[1] * v + H[2]) / denom;
-              const sy = (H[3] * u + H[4] * v + H[5]) / denom;
-              samples.push(sampleLumBilinear(lum, procW, procH, sx, sy));
+      let bestSubDecode: {
+        decoded: NonNullable<ReturnType<typeof decodeMarkerGridWithConfidence>>;
+        activeQuad: [Pt2, Pt2, Pt2, Pt2];
+        cellContrast: number;
+        sharpness: number;
+        borderOnes: number;
+      } | null = null;
+
+      let stageFailure: 'NONE' | 'FLAT' | 'BORDER' | 'DICT' = 'NONE';
+
+      for (const offsetPx of radialOffsets) {
+        const activeQuad = adjustQuadRadially(quad, offsetPx);
+        const H = computeMarkerHomography(activeQuad);
+        if (!H) continue;
+
+        const cellLum: number[][] = Array.from({ length: 6 }, () => new Array(6).fill(0));
+        const all36Cells: number[] = [];
+
+        for (let r = 0; r < 6; r++) {
+          for (let c = 0; c < 6; c++) {
+            const samples: number[] = [];
+            for (const dy of subOffsets) {
+              const v = r + dy;
+              for (const dx of subOffsets) {
+                const u = c + dx;
+                const denom = H[6] * u + H[7] * v + H[8];
+                if (Math.abs(denom) < 1e-6) continue;
+                const sx = (H[0] * u + H[1] * v + H[2]) / denom;
+                const sy = (H[3] * u + H[4] * v + H[5]) / denom;
+                samples.push(sampleLumBilinear(lum, procW, procH, sx, sy));
+              }
+            }
+            samples.sort((a, b) => a - b);
+            const medianVal = samples.length > 0 ? samples[samples.length >> 1] : 0;
+            cellLum[r][c] = medianVal;
+            all36Cells.push(medianVal);
+          }
+        }
+
+        let cellMin = 255;
+        let cellMax = 0;
+        for (const v of all36Cells) {
+          if (v < cellMin) cellMin = v;
+          if (v > cellMax) cellMax = v;
+        }
+        const cellContrast = cellMax - cellMin;
+        if (cellContrast < 6) {
+          if (stageFailure === 'NONE') stageFailure = 'FLAT';
+          continue;
+        }
+
+        const thresh = computeOtsuThreshold36(all36Cells);
+        const grid: number[][] = Array.from({ length: 6 }, () => new Array(6).fill(0));
+        let borderOnes = 0;
+        let innerWhiteCount = 0;
+
+        for (let r = 0; r < 6; r++) {
+          for (let c = 0; c < 6; c++) {
+            const bit = cellLum[r][c] >= thresh ? 1 : 0;
+            grid[r][c] = bit;
+            if (r === 0 || r === 5 || c === 0 || c === 5) {
+              if (bit === 1) borderOnes++;
+            } else if (bit === 1) {
+              innerWhiteCount++;
             }
           }
-          samples.sort((a, b) => a - b);
-          const medianVal = samples.length > 0 ? samples[samples.length >> 1] : 0;
-          cellLum[r][c] = medianVal;
-          all36Cells.push(medianVal);
         }
-      }
 
-      let cellMin = 255;
-      let cellMax = 0;
-      for (const v of all36Cells) {
-        if (v < cellMin) cellMin = v;
-        if (v > cellMax) cellMax = v;
-      }
-      const cellContrast = cellMax - cellMin;
-      // Only discard mathematically flat noise (< 6 gray levels); never reject valid low-contrast markers
-      if (cellContrast < 6) {
-        rejectedLowContrastCount++;
-        continue;
-      }
+        // Solid black square without internal white cells -> flat/empty
+        if (innerWhiteCount === 0) {
+          if (stageFailure === 'NONE') stageFailure = 'FLAT';
+          continue;
+        }
 
-      const thresh = computeOtsuThreshold36(all36Cells);
-      const grid: number[][] = Array.from({ length: 6 }, () => new Array(6).fill(0));
-      let borderOnes = 0;
-      let innerWhiteCount = 0;
+        // F3: Allow up to MAX_BORDER_ERRORS = 7 white cells on small markers (< 20px where cells are < 3.3px),
+        // up to 3 white cells on medium markers (20..47px), and up to 2 on large markers (>= 48px).
+        const maxAllowedBorderErrors = qAvgSide >= 48 ? 2 : qAvgSide >= 20 ? 3 : MAX_BORDER_ERRORS;
+        if (
+          borderOnes > maxAllowedBorderErrors ||
+          (innerWhiteCount <= 1 && borderOnes > 0) ||
+          ((innerWhiteCount <= 2 || innerWhiteCount >= 14) && borderOnes >= 2)
+        ) {
+          if (cellContrast >= 12 && (stageFailure === 'NONE' || stageFailure === 'FLAT')) {
+            stageFailure = 'BORDER';
+          }
+          continue;
+        }
 
-      for (let r = 0; r < 6; r++) {
-        for (let c = 0; c < 6; c++) {
-          const bit = cellLum[r][c] >= thresh ? 1 : 0;
-          grid[r][c] = bit;
-          if (r === 0 || r === 5 || c === 0 || c === 5) {
-            if (bit === 1) borderOnes++;
-          } else if (bit === 1) {
-            innerWhiteCount++;
+        // Verify the candidate is surrounded by an authentic bright quiet zone around its 4 outer edges
+        // (prevents random checkerboard noise blobs from false-matching DICT_4X4_50)
+        {
+          let quietZoneWhiteProbes = 0;
+          let quietZoneValidProbes = 0;
+          const quietProbeCoords: Array<[number, number]> = [
+            [1.5, -0.35], [2.5, -0.35], [3.5, -0.35], [4.5, -0.35],
+            [1.5, 6.35],  [2.5, 6.35],  [3.5, 6.35],  [4.5, 6.35],
+            [-0.35, 1.5], [-0.35, 2.5], [-0.35, 3.5], [-0.35, 4.5],
+            [6.35, 1.5],  [6.35, 2.5],  [6.35, 3.5],  [6.35, 4.5],
+          ];
+          for (const [u, v] of quietProbeCoords) {
+            const denom = H[6] * u + H[7] * v + H[8];
+            if (Math.abs(denom) < 1e-6) continue;
+            const sx = (H[0] * u + H[1] * v + H[2]) / denom;
+            const sy = (H[3] * u + H[4] * v + H[5]) / denom;
+            if (sx >= 0 && sx < procW && sy >= 0 && sy < procH) {
+              quietZoneValidProbes++;
+              if (sampleLumBilinear(lum, procW, procH, sx, sy) >= thresh) {
+                quietZoneWhiteProbes++;
+              }
+            }
+          }
+          if (quietZoneValidProbes >= 8 && quietZoneWhiteProbes < Math.ceil(quietZoneValidProbes * 0.75)) {
+            if (stageFailure === 'NONE' || stageFailure === 'FLAT') {
+              stageFailure = 'BORDER';
+            }
+            continue;
           }
         }
-      }
 
-      // Solid black square without internal white cells -> not a valid marker
-      if (innerWhiteCount === 0) continue;
-
-      // Strict 1-bit black border validation: reject corrupted/partially obscured borders
-      if (borderOnes > 0) {
-        if (borderOnes <= 12 && cellContrast >= 12) {
-          rejectedBorderCorruptedCount++;
+        // Check 6x6 vs 8x8 (DICT_6X6) border thickness guard
+        let outerTransitionLeakCount = 0;
+        const borderProbeCoords: Array<[number, number]> = [
+          [1.5, 0.9], [2.5, 0.9], [3.5, 0.9], [4.5, 0.9],
+          [1.5, 5.1], [2.5, 5.1], [3.5, 5.1], [4.5, 5.1],
+          [0.9, 1.5], [0.9, 2.5], [0.9, 3.5], [0.9, 4.5],
+          [5.1, 1.5], [5.1, 2.5], [5.1, 3.5], [5.1, 4.5],
+        ];
+        for (const [u, v] of borderProbeCoords) {
+          const denom = H[6] * u + H[7] * v + H[8];
+          if (Math.abs(denom) < 1e-6) continue;
+          const sx = (H[0] * u + H[1] * v + H[2]) / denom;
+          const sy = (H[3] * u + H[4] * v + H[5]) / denom;
+          if (sampleLumBilinear(lum, procW, procH, sx, sy) > thresh + 12) {
+            outerTransitionLeakCount++;
+          }
         }
-        continue;
-      }
 
-      // Check 6x6 vs 8x8 (DICT_6X6) border thickness guard:
-      // At u/v = 0.88 cells from outer edge, a true 6x6 marker is still strictly inside the 1.0-cell black border,
-      // whereas an 8x8 (DICT_6X6) marker's border ends at 6/8 = 0.75 cells and exposes white inner cells along row/col 1!
-      let outerTransitionLeakCount = 0;
-      const borderProbeCoords: Array<[number, number]> = [
-        [1.5, 0.9], [2.5, 0.9], [3.5, 0.9], [4.5, 0.9],
-        [1.5, 5.1], [2.5, 5.1], [3.5, 5.1], [4.5, 5.1],
-        [0.9, 1.5], [0.9, 2.5], [0.9, 3.5], [0.9, 4.5],
-        [5.1, 1.5], [5.1, 2.5], [5.1, 3.5], [5.1, 4.5],
-      ];
-      for (const [u, v] of borderProbeCoords) {
-        const denom = H[6] * u + H[7] * v + H[8];
-        if (Math.abs(denom) < 1e-6) continue;
-        const sx = (H[0] * u + H[1] * v + H[2]) / denom;
-        const sy = (H[3] * u + H[4] * v + H[5]) / denom;
-        if (sampleLumBilinear(lum, procW, procH, sx, sy) > thresh + 12) {
-          outerTransitionLeakCount++;
+        // Require exact 0-Hamming inner match whenever borderOnes > 0 to prevent false positives;
+        // allow 1-bit Hamming correction when all 20 border cells are clean and inner pattern has >= 2 white bits
+        const allowError =
+          (options?.allowOneBitError ?? true) &&
+          borderOnes === 0 &&
+          innerWhiteCount >= 2 &&
+          outerTransitionLeakCount <= 1
+            ? 1
+            : 0;
+
+        const decoded = decodeMarkerGridWithConfidence(grid, allowError, maxAllowedBorderErrors);
+        if (!decoded || !(decoded.id in ARUCO_DICT_4X4_50_BITS)) {
+          if (cellContrast >= 12) {
+            stageFailure = 'DICT';
+          }
+          continue;
+        }
+
+        // Guard against 8x8 (DICT_6X6) or random block aliasing when border has errors
+        if (
+          (outerTransitionLeakCount >= 4 && decoded.hammingDistance > 0) ||
+          (borderOnes > 0 && outerTransitionLeakCount >= 4 && qMinSide >= 18)
+        ) {
+          stageFailure = 'DICT';
+          continue;
+        }
+
+        // Compute sharpness across adjacent contrasting cells in the 6x6 grid
+        let gradSum = 0;
+        let gradCount = 0;
+        for (let r = 0; r < 6; r++) {
+          for (let c = 0; c < 6; c++) {
+            if (c + 1 < 6 && grid[r][c] !== grid[r][c + 1]) {
+              gradSum += Math.abs(cellLum[r][c] - cellLum[r][c + 1]);
+              gradCount++;
+            }
+            if (r + 1 < 6 && grid[r][c] !== grid[r + 1][c]) {
+              gradSum += Math.abs(cellLum[r][c] - cellLum[r + 1][c]);
+              gradCount++;
+            }
+          }
+        }
+        const sharpness = gradCount > 0 ? gradSum / gradCount : cellContrast;
+
+        if (
+          !bestSubDecode ||
+          borderOnes * 2 + decoded.hammingDistance <
+            bestSubDecode.borderOnes * 2 + bestSubDecode.decoded.hammingDistance
+        ) {
+          bestSubDecode = {
+            decoded,
+            activeQuad,
+            cellContrast,
+            sharpness,
+            borderOnes,
+          };
+        }
+
+        // If perfect 0-border-error, 0-Hamming match found, stop checking other radial offsets
+        if (borderOnes === 0 && decoded.hammingDistance === 0) {
+          break;
         }
       }
 
-      // Allow 1-bit Hamming correction only when border thickness confirms 6x6 geometry
-      const allowError = (options?.allowOneBitError ?? true) && outerTransitionLeakCount <= 1 ? 1 : 0;
-      const decoded = decodeMarkerGridWithConfidence(grid, allowError);
-
-      if (!decoded || !(decoded.id in ARUCO_DICT_4X4_50_BITS)) {
-        if (cellContrast >= 12) {
+      if (!bestSubDecode) {
+        if (stageFailure === 'DICT') {
           rejectedWrongDictOrInvalidIdCount++;
+        } else if (stageFailure === 'BORDER') {
+          rejectedBorderCorruptedCount++;
+        } else {
+          rejectedLowContrastCount++;
         }
         continue;
       }
 
-      // Reject probable 6x6/other-grid false alias if >2 border-boundary probes hit white inside 0.9 cells
-      // (a genuine 6x6 DICT_4X4_50 marker has a full 1.0-cell black border)
-      if (outerTransitionLeakCount >= 4 && decoded.hammingDistance > 0) {
-        rejectedWrongDictOrInvalidIdCount++;
-        continue;
-      }
+      const { decoded, activeQuad, cellContrast, sharpness, borderOnes } = bestSubDecode;
 
       // Rotate quad vertices so corners[0] is the marker's canonical Top-Left
       const shift = (4 - decoded.rotCwStepsNeeded) % 4;
       const invScale = 1 / procScale;
       const alignedCorners: [Point3D, Point3D, Point3D, Point3D] = [
-        { x: quad[shift].x * invScale, y: quad[shift].y * invScale, z: 0 },
-        { x: quad[(shift + 1) % 4].x * invScale, y: quad[(shift + 1) % 4].y * invScale, z: 0 },
-        { x: quad[(shift + 2) % 4].x * invScale, y: quad[(shift + 2) % 4].y * invScale, z: 0 },
-        { x: quad[(shift + 3) % 4].x * invScale, y: quad[(shift + 3) % 4].y * invScale, z: 0 },
+        { x: activeQuad[shift].x * invScale, y: activeQuad[shift].y * invScale, z: 0 },
+        { x: activeQuad[(shift + 1) % 4].x * invScale, y: activeQuad[(shift + 1) % 4].y * invScale, z: 0 },
+        { x: activeQuad[(shift + 2) % 4].x * invScale, y: activeQuad[(shift + 2) % 4].y * invScale, z: 0 },
+        { x: activeQuad[(shift + 3) % 4].x * invScale, y: activeQuad[(shift + 3) % 4].y * invScale, z: 0 },
       ];
 
       const center: Point3D = {
@@ -1001,16 +1251,25 @@ export function detectArucoMarkersFromImageData(
         z: 0,
       };
 
+      const s0 = Math.hypot(alignedCorners[1].x - alignedCorners[0].x, alignedCorners[1].y - alignedCorners[0].y);
+      const s1 = Math.hypot(alignedCorners[2].x - alignedCorners[1].x, alignedCorners[2].y - alignedCorners[1].y);
+      const s2 = Math.hypot(alignedCorners[3].x - alignedCorners[2].x, alignedCorners[3].y - alignedCorners[2].y);
+      const s3 = Math.hypot(alignedCorners[0].x - alignedCorners[3].x, alignedCorners[0].y - alignedCorners[3].y);
+      const sidePx = Number(((s0 + s1 + s2 + s3) / 4).toFixed(2));
+
       const markerSizeM = decoded.id >= 3 && decoded.id <= 10 ? 0.0065 : MARKER_SIZE_METERS;
       const pose = estimateMarkerPose(alignedCorners, calib, markerSizeM);
-      const quadArea = Math.abs(polygonSignedArea(quad));
+      const quadArea = Math.abs(polygonSignedArea(activeQuad));
 
       candidates.push({
         id: decoded.id,
         corners: alignedCorners,
         center,
         hammingDistance: decoded.hammingDistance,
+        borderWhiteCells: borderOnes,
         contrast: cellContrast,
+        sharpness: Number(sharpness.toFixed(1)),
+        sidePx,
         area: quadArea,
         tvec: pose.tvec,
         rvec: pose.rvec,
@@ -1020,30 +1279,54 @@ export function detectArucoMarkersFromImageData(
     // 5. Deduplicate overlapping detections & sort by ID
     candidates.sort((a, b) => {
       if (a.hammingDistance !== b.hammingDistance) return a.hammingDistance - b.hammingDistance;
+      if (a.borderWhiteCells !== b.borderWhiteCells) return a.borderWhiteCells - b.borderWhiteCells;
       if (b.contrast !== a.contrast) return b.contrast - a.contrast;
       return b.area - a.area;
     });
 
     const markers: MarkerPose[] = [];
-    const seenIds = new Set<number>();
+    const markerQualities: MarkerQuality[] = [];
     const acceptedCenters: { x: number; y: number; radius: number }[] = [];
-    const lowContrastMarkerIds: number[] = [];
+    const lowContrastSet = new Set<number>();
+    const borderWarningSet = new Set<number>();
 
     for (const cand of candidates) {
-      if (seenIds.has(cand.id)) continue;
-
-      // Reject spatial duplicates at virtually the same center
-      const candRadius = Math.sqrt(cand.area) * (1 / procScale) * 0.45;
+      // Reject spatial duplicates at the same physical marker location (merges Pass A / Pass B or inner/outer contours)
+      const candRadius = Math.max(cand.sidePx * 0.65, Math.sqrt(cand.area) * (1 / procScale) * 0.65);
       const overlaps = acceptedCenters.some(
         (ac) => Math.hypot(ac.x - cand.center.x, ac.y - cand.center.y) < Math.max(ac.radius, candRadius)
       );
       if (overlaps) continue;
 
-      seenIds.add(cand.id);
       acceptedCenters.push({ x: cand.center.x, y: cand.center.y, radius: candRadius });
       if (cand.contrast < 28) {
-        lowContrastMarkerIds.push(cand.id);
+        lowContrastSet.add(cand.id);
       }
+      if (cand.borderWhiteCells > 0) {
+        borderWarningSet.add(cand.id);
+      }
+
+      const grade: 'GOOD' | 'LOW' | 'POOR' =
+        cand.sidePx >= 16 &&
+        cand.contrast >= 50 &&
+        cand.borderWhiteCells === 0 &&
+        cand.hammingDistance === 0 &&
+        cand.sharpness >= 25
+          ? 'GOOD'
+          : cand.sidePx < 10 || cand.contrast < 25 || cand.borderWhiteCells >= 4 || cand.sharpness < 12
+          ? 'POOR'
+          : 'LOW';
+
+      markerQualities.push({
+        id: cand.id,
+        sidePx: cand.sidePx,
+        cellContrast: Number(cand.contrast.toFixed(1)),
+        hamming: cand.hammingDistance,
+        borderWhiteCells: cand.borderWhiteCells,
+        sharpness: cand.sharpness,
+        grade,
+      });
+
       markers.push({
         id: cand.id,
         corners: cand.corners,
@@ -1053,18 +1336,31 @@ export function detectArucoMarkersFromImageData(
       });
     }
 
-    markers.sort((a, b) => a.id - b.id);
-    lowContrastMarkerIds.sort((a, b) => a - b);
+    markers.sort((a, b) => a.id - b.id || a.center.x - b.center.x);
+    markerQualities.sort((a, b) => a.id - b.id);
+    const lowContrastMarkerIds = Array.from(lowContrastSet).sort((a, b) => a - b);
+    const borderWarningMarkerIds = Array.from(borderWarningSet).sort((a, b) => a - b);
 
-    // 6. Classify dominant failure reason when 0 markers detected; attach non-blocking quality warnings when detected
+    const candidateSummary: ArucoCandidateSummary = {
+      quads: quads.length,
+      rejectedTooSmall: rejectedTooSmallCount,
+      rejectedBorder: rejectedBorderCorruptedCount,
+      rejectedDictionary: rejectedWrongDictOrInvalidIdCount,
+      rejectedFlat: rejectedLowContrastCount,
+    };
+
+    // 6. Attach non-blocking quality warnings when detected; classify dominant failure reason when 0 markers detected
     const qualityWarnings: string[] = [];
     if (lowContrastMarkerIds.length > 0) {
       qualityWarnings.push(`Low contrast on marker IDs [${lowContrastMarkerIds.join(', ')}] — detected without suppression`);
     }
-    if (meanLuminance < 55) {
-      qualityWarnings.push('Low scene illumination (< 55 IRE)');
-    } else if (glareRatio > 0.25) {
-      qualityWarnings.push('Specular glare detected on scene (> 25%)');
+    if (borderWarningMarkerIds.length > 0) {
+      qualityWarnings.push(`Imperfect outer border on marker IDs [${borderWarningMarkerIds.join(', ')}] — detected without suppression`);
+    }
+    if (meanLuminance < 42) {
+      qualityWarnings.push('Low scene illumination (mean luminance < 42)');
+    } else if (glareRatio > 0.35 && rejectedLowContrastCount > 0) {
+      qualityWarnings.push('Specular glare detected (> 35% with flat quad candidates)');
     }
 
     let failureCategory: ArucoFailureCategory = 'NONE';
@@ -1075,12 +1371,7 @@ export function detectArucoMarkersFromImageData(
         failureCategory = 'PARTIALLY_OBSCURED';
       } else if (rejectedTooSmallCount > 0 && quads.length === 0) {
         failureCategory = 'MARKER_TOO_SMALL';
-      } else if (
-        meanLuminance < 42 ||
-        darkRatio > 0.72 ||
-        glareRatio > 0.35 ||
-        rejectedLowContrastCount > 0
-      ) {
+      } else if (meanLuminance < 42 || (glareRatio > 0.35 && rejectedLowContrastCount > 0)) {
         failureCategory = 'POOR_LIGHTING_OR_GLARE';
       } else if (rejectedTooSmallCount > 0) {
         failureCategory = 'MARKER_TOO_SMALL';
@@ -1109,10 +1400,13 @@ export function detectArucoMarkersFromImageData(
       rejectedLowContrastCount,
       rejectedBorderCorruptedCount,
       rejectedWrongDictOrInvalidIdCount,
+      candidateSummary,
       failureCategory,
       markers,
       detectedIds: markers.map((m) => m.id),
+      markerQualities,
       lowContrastMarkerIds,
+      borderWarningMarkerIds,
       qualityWarnings,
     };
   } catch (err: any) {
@@ -1136,16 +1430,91 @@ export function detectArucoMarkersFromImageData(
       rejectedLowContrastCount: 0,
       rejectedBorderCorruptedCount: 0,
       rejectedWrongDictOrInvalidIdCount: 0,
+      candidateSummary: {
+        quads: 0,
+        rejectedTooSmall: 0,
+        rejectedBorder: 0,
+        rejectedDictionary: 0,
+        rejectedFlat: 0,
+      },
       failureCategory: 'FRAME_PROCESSING_FAILED',
       markers: [],
       detectedIds: [],
+      markerQualities: [],
     };
   }
 }
 
-// Cached offscreen canvas for video/canvas frame extraction
+// ---------------------------------------------------------------------------
+// F2: Adaptive Processing Resolution Controller & Offscreen Frame Extractor
+// ---------------------------------------------------------------------------
 let cachedDetectorCanvas: HTMLCanvasElement | null = null;
 let cachedDetectorCtx: CanvasRenderingContext2D | null = null;
+let activeMaxProcDim: number = MAX_PROC_DIM;
+let rollingProcTimesMs: number[] = [];
+let lastSeenSourceDims: { w: number; h: number } = { w: 0, h: 0 };
+
+/**
+ * Resets the adaptive processing resolution controller back to MAX_PROC_DIM (1920px).
+ */
+export function resetAdaptiveResolutionController(): void {
+  activeMaxProcDim = MAX_PROC_DIM;
+  rollingProcTimesMs = [];
+  lastSeenSourceDims = { w: 0, h: 0 };
+}
+
+/**
+ * Returns current adaptive processing resolution state for telemetry & testing.
+ */
+export function getAdaptiveResolutionState(): {
+  activeMaxProcDim: number;
+  rollingAvgMs: number;
+  sampleCount: number;
+} {
+  const sum = rollingProcTimesMs.reduce((acc, v) => acc + v, 0);
+  const rollingAvgMs = rollingProcTimesMs.length > 0 ? Number((sum / rollingProcTimesMs.length).toFixed(2)) : 0;
+  return {
+    activeMaxProcDim,
+    rollingAvgMs,
+    sampleCount: rollingProcTimesMs.length,
+  };
+}
+
+/**
+ * Updates the adaptive processing resolution controller with the latest frame duration.
+ * - Starts at native resolution up to 1920px (`MAX_PROC_DIM`).
+ * - Uses a 10-frame rolling average budget of 45ms (`PROC_FRAME_BUDGET_MS`).
+ * - Steps down to 1280px (`ADAPTIVE_FALLBACK_PROC_DIM`) when sustained 10-frame average exceeds 45ms.
+ * - Never drops below 960px (`MIN_AUTO_PROC_DIM`) through automatic adaptation.
+ * - Resets window on step-down to prevent canvas resize churn on every frame.
+ */
+export function recordFrameProcessingDuration(durationMs: number): number {
+  rollingProcTimesMs.push(durationMs);
+  if (rollingProcTimesMs.length > 10) {
+    rollingProcTimesMs.shift();
+  }
+  if (rollingProcTimesMs.length === 10) {
+    const avgMs = rollingProcTimesMs.reduce((acc, v) => acc + v, 0) / 10;
+    if (avgMs > PROC_FRAME_BUDGET_MS) {
+      if (activeMaxProcDim > ADAPTIVE_FALLBACK_PROC_DIM) {
+        activeMaxProcDim = ADAPTIVE_FALLBACK_PROC_DIM;
+        rollingProcTimesMs = [];
+      } else if (activeMaxProcDim > MIN_AUTO_PROC_DIM) {
+        activeMaxProcDim = MIN_AUTO_PROC_DIM;
+        rollingProcTimesMs = [];
+      }
+    }
+  }
+  return activeMaxProcDim;
+}
+
+const EMPTY_CANDIDATE_SUMMARY: ArucoCandidateSummary = {
+  quads: 0,
+  rejectedTooSmall: 0,
+  rejectedBorder: 0,
+  rejectedDictionary: 0,
+  rejectedFlat: 0,
+};
 
 /**
  * Runs detailed live ArUco DICT_4X4_50 detection on an HTMLVideoElement or HTMLCanvasElement.
@@ -1176,9 +1545,11 @@ export function detectArucoMarkersDetailed(
       rejectedLowContrastCount: 0,
       rejectedBorderCorruptedCount: 0,
       rejectedWrongDictOrInvalidIdCount: 0,
+      candidateSummary: { ...EMPTY_CANDIDATE_SUMMARY },
       failureCategory: 'DETECTOR_INIT_FAILED',
       markers: [],
       detectedIds: [],
+      markerQualities: [],
     };
   }
 
@@ -1206,9 +1577,11 @@ export function detectArucoMarkersDetailed(
       rejectedLowContrastCount: 0,
       rejectedBorderCorruptedCount: 0,
       rejectedWrongDictOrInvalidIdCount: 0,
+      candidateSummary: { ...EMPTY_CANDIDATE_SUMMARY },
       failureCategory: 'FRAME_PROCESSING_FAILED',
       markers: [],
       detectedIds: [],
+      markerQualities: [],
     };
   }
 
@@ -1233,13 +1606,22 @@ export function detectArucoMarkersDetailed(
       rejectedLowContrastCount: 0,
       rejectedBorderCorruptedCount: 0,
       rejectedWrongDictOrInvalidIdCount: 0,
+      candidateSummary: { ...EMPTY_CANDIDATE_SUMMARY },
       failureCategory: 'DETECTOR_INIT_FAILED',
       markers: [],
       detectedIds: [],
+      markerQualities: [],
     };
   }
 
-  const maxDim = 960;
+  // Reset to full native resolution (up to 1920px) when camera stream resolution changes
+  if (lastSeenSourceDims.w !== srcW || lastSeenSourceDims.h !== srcH) {
+    lastSeenSourceDims = { w: srcW, h: srcH };
+    activeMaxProcDim = MAX_PROC_DIM;
+    rollingProcTimesMs = [];
+  }
+
+  const maxDim = activeMaxProcDim;
   const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
   const procW = Math.max(16, Math.round(srcW * scale));
   const procH = Math.max(16, Math.round(srcH * scale));
@@ -1276,51 +1658,64 @@ export function detectArucoMarkersDetailed(
       rejectedLowContrastCount: 0,
       rejectedBorderCorruptedCount: 0,
       rejectedWrongDictOrInvalidIdCount: 0,
+      candidateSummary: { ...EMPTY_CANDIDATE_SUMMARY },
       failureCategory: 'DETECTOR_INIT_FAILED',
       markers: [],
       detectedIds: [],
+      markerQualities: [],
     };
   }
 
   try {
     cachedDetectorCtx.drawImage(source, 0, 0, procW, procH);
     const imgData = cachedDetectorCtx.getImageData(0, 0, procW, procH);
-    const result = detectArucoMarkersFromImageData(imgData, normalizeCalibration(calibInput, srcW, srcH), {
+    const result = detectArucoMarkersFromImageData(imgData, normalizeCalibration(calibInput, procW, procH), {
       maxProcDim: maxDim,
       allowOneBitError: true,
     });
 
-    // Scale coordinates back from procW x procH to native source srcW x srcH
-    if (scale !== 1 && result.markers.length > 0) {
+    // Scale coordinates and sidePx back from procW x procH to native source srcW x srcH
+    if (scale !== 1) {
       const invScale = 1 / scale;
-      const calib = normalizeCalibration(calibInput, srcW, srcH);
-      result.markers = result.markers.map((m) => {
-        const scaledCorners: [Point3D, Point3D, Point3D, Point3D] = [
-          { x: m.corners[0].x * invScale, y: m.corners[0].y * invScale, z: 0 },
-          { x: m.corners[1].x * invScale, y: m.corners[1].y * invScale, z: 0 },
-          { x: m.corners[2].x * invScale, y: m.corners[2].y * invScale, z: 0 },
-          { x: m.corners[3].x * invScale, y: m.corners[3].y * invScale, z: 0 },
-        ];
-        const center: Point3D = {
-          x: m.center.x * invScale,
-          y: m.center.y * invScale,
-          z: 0,
-        };
-        const markerSizeM = m.id >= 3 && m.id <= 10 ? 0.0065 : MARKER_SIZE_METERS;
-        const pose = estimateMarkerPose(scaledCorners, calib, markerSizeM);
-        return {
-          ...m,
-          corners: scaledCorners,
-          center,
-          tvec: pose.tvec,
-          rvec: pose.rvec,
-        };
-      });
+      if (result.markers.length > 0) {
+        const calib = normalizeCalibration(calibInput, srcW, srcH);
+        result.markers = result.markers.map((m) => {
+          const scaledCorners: [Point3D, Point3D, Point3D, Point3D] = [
+            { x: m.corners[0].x * invScale, y: m.corners[0].y * invScale, z: 0 },
+            { x: m.corners[1].x * invScale, y: m.corners[1].y * invScale, z: 0 },
+            { x: m.corners[2].x * invScale, y: m.corners[2].y * invScale, z: 0 },
+            { x: m.corners[3].x * invScale, y: m.corners[3].y * invScale, z: 0 },
+          ];
+          const center: Point3D = {
+            x: m.center.x * invScale,
+            y: m.center.y * invScale,
+            z: 0,
+          };
+          const markerSizeM = m.id >= 3 && m.id <= 10 ? 0.0065 : MARKER_SIZE_METERS;
+          const pose = estimateMarkerPose(scaledCorners, calib, markerSizeM);
+          return {
+            ...m,
+            corners: scaledCorners,
+            center,
+            tvec: pose.tvec,
+            rvec: pose.rvec,
+          };
+        });
+      }
+      if (result.markerQualities && result.markerQualities.length > 0) {
+        result.markerQualities = result.markerQualities.map((mq) => ({
+          ...mq,
+          sidePx: Number((mq.sidePx * invScale).toFixed(2)),
+        }));
+      }
     }
+
+    const elapsedMs = Number((nowMs() - tStart).toFixed(2));
+    recordFrameProcessingDuration(elapsedMs);
 
     result.sourceWidth = srcW;
     result.sourceHeight = srcH;
-    result.processingTimeMs = Number((nowMs() - tStart).toFixed(2));
+    result.processingTimeMs = elapsedMs;
     return result;
   } catch (err: any) {
     return {
@@ -1343,9 +1738,11 @@ export function detectArucoMarkersDetailed(
       rejectedLowContrastCount: 0,
       rejectedBorderCorruptedCount: 0,
       rejectedWrongDictOrInvalidIdCount: 0,
+      candidateSummary: { ...EMPTY_CANDIDATE_SUMMARY },
       failureCategory: 'FRAME_PROCESSING_FAILED',
       markers: [],
       detectedIds: [],
+      markerQualities: [],
     };
   }
 }

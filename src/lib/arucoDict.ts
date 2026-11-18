@@ -240,29 +240,37 @@ export interface MarkerDecodeResult {
   rotationDeg: number;
   rotCwStepsNeeded: number;
   hammingDistance: number;
+  borderWhiteCells?: number;
 }
 
 /**
- * Digital ArUco DICT_4X4_50 Decoder with optional 1-bit Hamming error correction.
+ * Digital ArUco DICT_4X4_50 Decoder with optional 1-bit Hamming error correction
+ * and configurable outer-border cell error tolerance (OpenCV maxErroneousBitsInBorderRate parity).
  * Verifies that a 6x6 marker grid has:
- * 1. A pure 1-bit black border (perimeter cells == 0)
+ * 1. At most `maxBorderErrors` white cells among the 20 perimeter border cells (default 0 for strict digital decode)
  * 2. An inner 4x4 data matrix matching OpenCV DICT_4X4_50 (min Hamming distance = 4)
- * 3. Returns { id, rotationDeg, rotCwStepsNeeded, hammingDistance } or null if invalid
+ * 3. Returns { id, rotationDeg, rotCwStepsNeeded, hammingDistance, borderWhiteCells } or null if invalid
  */
 export function decodeMarkerGridWithConfidence(
   grid: number[][],
-  maxErrorBits: number = 0
+  maxErrorBits: number = 0,
+  maxBorderErrors: number = 0
 ): MarkerDecodeResult | null {
   if (!grid || grid.length !== 6 || grid.some(row => row.length !== 6)) {
     return null;
   }
 
-  // 1. Verify 1-bit black border on all 4 perimeter edges (all must be 0)
-  for (let c = 0; c < 6; c++) {
-    if (grid[0][c] !== 0 || grid[5][c] !== 0) return null;
-  }
+  // 1. Count white cells across the 20 unique perimeter border cells (rows 0,5 and cols 0,5)
+  let borderWhiteCells = 0;
   for (let r = 0; r < 6; r++) {
-    if (grid[r][0] !== 0 || grid[r][5] !== 0) return null;
+    for (let c = 0; c < 6; c++) {
+      if (r === 0 || r === 5 || c === 0 || c === 5) {
+        if (grid[r][c] !== 0) {
+          borderWhiteCells++;
+          if (borderWhiteCells > maxBorderErrors) return null;
+        }
+      }
+    }
   }
 
   // 2. Extract 4x4 inner data grid
@@ -309,6 +317,7 @@ export function decodeMarkerGridWithConfidence(
           rotationDeg: rotations[rotIdx],
           rotCwStepsNeeded: rotIdx,
           hammingDistance: 0,
+          borderWhiteCells,
         };
       }
       if (dist <= maxErrorBits) {
@@ -319,6 +328,7 @@ export function decodeMarkerGridWithConfidence(
             rotationDeg: rotations[rotIdx],
             rotCwStepsNeeded: rotIdx,
             hammingDistance: dist,
+            borderWhiteCells,
           };
         } else {
           secondBestDist = Math.min(secondBestDist, dist);

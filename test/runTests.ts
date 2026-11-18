@@ -1585,7 +1585,7 @@ console.log('\nTest Group 22: Live ArUco CV Pipeline, Raster ImageData & Failure
 
   // Case 8 & 11: Real raster checks for too-small & poor-lighting + 9-condition live ArUco diagnostic evaluation
   const tinyFrame = createBlankFrame(220, 220, 225);
-  drawGridMarkerToFrame(tinyFrame, getFullMarkerGrid(0), 110, 110, 9, 0); // 9x9px marker (below 12px decoding threshold)
+  drawGridMarkerToFrame(tinyFrame, getFullMarkerGrid(0), 110, 110, 6, 0); // 6x6px marker (below 7px MIN_SIDE_PX threshold)
   const detTiny = detectArucoMarkersFromImageData(tinyFrame);
 
   const darkFrame = createBlankFrame(220, 220, 18); // Very dark scene (< 42 mean luminance)
@@ -1625,7 +1625,12 @@ console.log('\nTest Group 22: Live ArUco CV Pipeline, Raster ImageData & Failure
     cameraActive: true,
     cameraPoweredOn: true,
     cameraError: null,
-    frameDiag: { ...detEmpty, failureCategory: 'PARTIALLY_OBSCURED', rejectedBorderCorruptedCount: 1 },
+    frameDiag: {
+      ...detEmpty,
+      failureCategory: 'PARTIALLY_OBSCURED',
+      rejectedBorderCorruptedCount: 1,
+      candidateSummary: { ...detEmpty.candidateSummary, rejectedBorder: 1 },
+    },
     detectedIds: [],
   });
   const diagWrongDict = evaluateArucoPipelineDiagnostic({
@@ -1990,6 +1995,94 @@ console.log('\nTest Group 23: Contactless Facial Reference, Rim-Only ArUco & 7 L
       (calPose.reprojectionErrorPx ?? 99) < 1.5,
     '23j: Uncalibrated 2D landmarks report UNAVAILABLE_2D_ONLY (no invented depth); calibrated camera solves 3D anthropometric PnP within 2cm',
     `uncal=${uncalPose.poseMethod}, calMethod=${calPose.poseMethod}, calDepth=${calPose.depthMeters}, errPx=${calPose.reprojectionErrorPx}`
+  );
+
+  // 23k (Phase 6 Regression): Rasterize full A4 SVG sheet and verify all 27 intended markers decode cleanly
+  const pxPerMm = 6; // 210x297 mm -> 1260x1782 px (fits natively inside MAX_PROC_DIM = 1920)
+  const sheetW = 210 * pxPerMm;
+  const sheetH = 297 * pxPerMm;
+  const sheetData = new Uint8ClampedArray(sheetW * sheetH * 4);
+  sheetData.fill(255); // White A4 background
+
+  const txStack: Array<[number, number]> = [];
+  const tagRegex = /<\/?g\b[^>]*>|<rect\b[^>]*>/g;
+  let match: RegExpExecArray | null;
+  while ((match = tagRegex.exec(a4Sheet)) !== null) {
+    const tag = match[0];
+    if (tag.startsWith('</g')) {
+      txStack.pop();
+    } else if (tag.startsWith('<g')) {
+      const trMatch = /transform="translate\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)"/.exec(tag);
+      if (trMatch) {
+        txStack.push([ parseFloat(trMatch[1]), parseFloat(trMatch[2]) ]);
+      } else {
+        txStack.push([0, 0]);
+      }
+    } else if (tag.startsWith('<rect')) {
+      const fillMatch = /fill="([^"]+)"/.exec(tag);
+      const fill = fillMatch ? fillMatch[1].toUpperCase() : 'NONE';
+      if (fill === 'NONE') continue;
+      let gray = 255;
+      if (fill === '#000000') gray = 0;
+      else if (fill === '#FFFFFF') gray = 255;
+      else if (fill === '#F8FAFC') gray = 248;
+      else continue;
+
+      const xAttr = /\bx="([-\d.]+)"/.exec(tag);
+      const yAttr = /\by="([-\d.]+)"/.exec(tag);
+      const wAttr = /\bwidth="([-\d.]+)"/.exec(tag);
+      const hAttr = /\bheight="([-\d.]+)"/.exec(tag);
+      if (!wAttr || !hAttr) continue;
+
+      let rx = xAttr ? parseFloat(xAttr[1]) : 0;
+      let ry = yAttr ? parseFloat(yAttr[1]) : 0;
+      const rw = parseFloat(wAttr[1]);
+      const rh = parseFloat(hAttr[1]);
+      for (const [dx, dy] of txStack) {
+        rx += dx;
+        ry += dy;
+      }
+
+      const x0 = Math.max(0, Math.round(rx * pxPerMm));
+      const y0 = Math.max(0, Math.round(ry * pxPerMm));
+      const x1 = Math.min(sheetW, Math.round((rx + rw) * pxPerMm));
+      const y1 = Math.min(sheetH, Math.round((ry + rh) * pxPerMm));
+      for (let py = y0; py < y1; py++) {
+        const rowBase = py * sheetW;
+        for (let px = x0; px < x1; px++) {
+          const idx = (rowBase + px) * 4;
+          sheetData[idx] = gray;
+          sheetData[idx + 1] = gray;
+          sheetData[idx + 2] = gray;
+          sheetData[idx + 3] = 255;
+        }
+      }
+    }
+  }
+
+  const sheetDet = detectArucoMarkersFromImageData({
+    data: sheetData,
+    width: sheetW,
+    height: sheetH,
+  });
+
+  const idCounts = new Map<number, number>();
+  for (const m of sheetDet.markers) {
+    idCounts.set(m.id, (idCounts.get(m.id) ?? 0) + 1);
+  }
+  const allRimPrimaryAndSpareDecoded = [3, 4, 5, 6, 7, 8, 9, 10].every(id => idCounts.get(id) === 2);
+  const allHanauDecoded = [11, 12].every(id => idCounts.get(id) === 1);
+  const allCalibDecoded = [20, 21, 22, 23, 24, 25, 26, 27, 28].every(id => idCounts.get(id) === 1);
+  const zeroFaceDecoded = [0, 1, 2].every(id => (idCounts.get(id) ?? 0) === 0);
+
+  assert(
+    sheetDet.markers.length === 27 &&
+      allRimPrimaryAndSpareDecoded &&
+      allHanauDecoded &&
+      allCalibDecoded &&
+      zeroFaceDecoded,
+    '23k (Phase 6): Full rasterized A4 print sheet decodes all 27 intended markers (16 rim [3-10 primary+spare], 2 Hanau [11-12], 9 Calib [20-28], 0 facial [0-2])',
+    `total=${sheetDet.markers.length}, counts=${JSON.stringify(Object.fromEntries(idCounts))}`
   );
 }
 

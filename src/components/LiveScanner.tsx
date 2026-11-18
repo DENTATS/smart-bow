@@ -109,6 +109,8 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
   const [liveMarkers, setLiveMarkers] = useState<MarkerPose[]>([]);
   const [frameDiag, setFrameDiag] = useState<ArucoFrameDiagnostics | null>(null);
   const [lastSuccessDetectionTime, setLastSuccessDetectionTime] = useState<number | null>(null);
+  const [actualResolution, setActualResolution] = useState<{ width: number; height: number } | null>(null);
+  const [autofocusStatus, setAutofocusStatus] = useState<'CONTINUOUS' | 'DEFAULT' | 'UNSUPPORTED'>('DEFAULT');
   const liveMarkersRef = useRef<MarkerPose[]>([]);
   const lastSuccessDetectionRef = useRef<number | null>(null);
   const decayCountRef = useRef<number>(0);
@@ -141,14 +143,20 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
   // Calibration settings
   const [calibrationSettings, setCalibrationSettings] = useState<CameraCalibrationSettings>(() => loadCameraCalibration());
 
-  // Truthful Live Optical ArUco & Contactless Natural Face Statuses
-  const detectedIds = liveMarkers.map(m => m.id);
-  const maxillaDetectedCount = [3, 4, 5, 6].filter(id => detectedIds.includes(id)).length;
-  const mandibleDetectedCount = [7, 8, 9, 10].filter(id => detectedIds.includes(id)).length;
+  // Truthful Live Optical ArUco & Contactless Natural Face Statuses (deduplicated per group)
+  const detectedIds = Array.from(new Set(liveMarkers.map(m => m.id))).sort((a, b) => a - b);
+  const maxillaDetectedIds = [3, 4, 5, 6].filter(id => detectedIds.includes(id));
+  const maxillaMissingIds = [3, 4, 5, 6].filter(id => !detectedIds.includes(id));
+  const mandibleDetectedIds = [7, 8, 9, 10].filter(id => detectedIds.includes(id));
+  const mandibleMissingIds = [7, 8, 9, 10].filter(id => !detectedIds.includes(id));
+  const maxillaDetectedCount = maxillaDetectedIds.length;
+  const mandibleDetectedCount = mandibleDetectedIds.length;
   const maxillaryAllVisible = maxillaDetectedCount === 4;
   const mandibularAllVisible = mandibleDetectedCount === 4;
   const hasAnyOpticalMarkers = liveMarkers.length > 0;
   const faceTrackingDetected = trackingData?.detected ?? false;
+  const isLowCameraResolution =
+    actualResolution !== null && (actualResolution.width < 1280 || actualResolution.height < 720);
 
   const expectedTestIds: number[] =
     testStep === 'SINGLE'
@@ -225,7 +233,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     }
   }, [cameraActive]);
 
-  // Webcam stream lifecycle with explicit start/stop and clean resource teardown
+  // Webcam stream lifecycle with Phase 5 fallback sequence (1920x1080 -> 1280x720 -> defaults) & continuous autofocus
   useEffect(() => {
     let stream: MediaStream | null = null;
     let isCancelled = false;
@@ -234,6 +242,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
       const startCamera = async () => {
         try {
           setCameraPermissionError(null);
+          setActualResolution(null);
 
           if (!navigator.mediaDevices?.getUserMedia) {
             setCameraPermissionError('Camera API unavailable. A secure HTTPS context is required.');
@@ -241,27 +250,90 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
             return;
           }
 
-          const videoConstraint: MediaTrackConstraints = selectedDeviceId
-            ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-            : { facingMode: cameraFacing, width: { ideal: 1280 }, height: { ideal: 720 } };
+          const baseSourceConstraint: MediaTrackConstraints = selectedDeviceId
+            ? { deviceId: { exact: selectedDeviceId } }
+            : { facingMode: cameraFacing };
 
-          const constraints: MediaStreamConstraints = {
-            video: videoConstraint,
-            audio: false,
-          };
-          stream = await navigator.mediaDevices.getUserMedia(constraints);
+          // Phase 5 Step 1 -> 2 -> 3 fallback sequence
+          const constraintCandidates: MediaStreamConstraints[] = [
+            // 1. Request ideal 1920x1080 for 6.5mm dental-rim marker legibility
+            {
+              video: { ...baseSourceConstraint, width: { ideal: 1920 }, height: { ideal: 1080 } },
+              audio: false,
+            },
+            // 2. On OverconstrainedError / constraint failure, retry at 1280x720
+            {
+              video: { ...baseSourceConstraint, width: { ideal: 1280 }, height: { ideal: 720 } },
+              audio: false,
+            },
+            // 3a. Retry with browser defaults for selected device / facingMode
+            {
+              video: baseSourceConstraint,
+              audio: false,
+            },
+            // 3b. Final fallback: pure browser default video: true
+            {
+              video: true,
+              audio: false,
+            },
+          ];
+
+          let lastErr: any = null;
+          for (const candidate of constraintCandidates) {
+            try {
+              stream = await navigator.mediaDevices.getUserMedia(candidate);
+              if (stream) break;
+            } catch (err: any) {
+              lastErr = err;
+              // Do not retry if the user explicitly denied camera permission
+              if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+                throw err;
+              }
+            }
+          }
+
+          if (!stream) {
+            throw lastErr || new Error('Unable to acquire camera stream');
+          }
+
           if (isCancelled) {
             stream.getTracks().forEach(t => t.stop());
             return;
           }
+
+          // Phase 5: Request continuous autofocus where supported via track.getCapabilities() & applyConstraints()
+          const videoTrack = stream.getVideoTracks()[0];
+          if (videoTrack && typeof videoTrack.getCapabilities === 'function') {
+            try {
+              const capabilities = videoTrack.getCapabilities() as any;
+              if (Array.isArray(capabilities?.focusMode) && capabilities.focusMode.includes('continuous')) {
+                await videoTrack.applyConstraints({
+                  advanced: [{ focusMode: 'continuous' } as any],
+                });
+                if (!isCancelled) setAutofocusStatus('CONTINUOUS');
+              } else {
+                if (!isCancelled) setAutofocusStatus('UNSUPPORTED');
+              }
+            } catch {
+              if (!isCancelled) setAutofocusStatus('DEFAULT');
+            }
+          }
+
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
-            videoRef.current.onloadedmetadata = () => {
+            const syncVideoMetadata = () => {
+              if (!videoRef.current || isCancelled) return;
+              const vw = videoRef.current.videoWidth || 0;
+              const vh = videoRef.current.videoHeight || 0;
+              if (vw > 0 && vh > 0) {
+                setActualResolution({ width: vw, height: vh });
+              }
               updateCanvasDimensions();
             };
+            videoRef.current.onloadedmetadata = syncVideoMetadata;
             await videoRef.current.play();
             setCameraActive(true);
-            updateCanvasDimensions();
+            syncVideoMetadata();
 
             // Refresh device list after permission granted
             if (navigator.mediaDevices?.enumerateDevices) {
@@ -290,6 +362,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
       startCamera();
     } else {
       setCameraActive(false);
+      setActualResolution(null);
       liveMarkersRef.current = [];
       setLiveMarkers([]);
       setFrameDiag(null);
@@ -405,10 +478,11 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         ctx.fill();
       }
 
-      // Compute UI publish gate ONCE per tick so React state never starves
+      // Compute UI publish gate for expensive non-marker face telemetry (80 ms throttle)
       const shouldPublishUi = time - lastUiUpdate > 80;
 
       // 2. Real-Time Optical ArUco Marker Detection on live webcam feed (decoupled from face tracking)
+      // Phase 5: Update detection state on EVERY detection run (never hide fresh detections behind the 80ms throttle)
       if (isWebcamReady && videoRef.current) {
         if (frameCount % 2 === 0 || liveMarkersRef.current.length === 0) {
           const diag = detectArucoMarkersDetailed(videoRef.current, calibrationSettings);
@@ -416,6 +490,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
             liveMarkersRef.current = diag.markers;
             decayCountRef.current = 0;
             lastSuccessDetectionRef.current = Date.now();
+            setLastSuccessDetectionTime(lastSuccessDetectionRef.current);
           } else {
             decayCountRef.current++;
             if (decayCountRef.current >= 2) {
@@ -423,13 +498,8 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
             }
           }
 
-          if (shouldPublishUi) {
-            setLiveMarkers(liveMarkersRef.current);
-            setFrameDiag(diag);
-            if (lastSuccessDetectionRef.current !== null) {
-              setLastSuccessDetectionTime(lastSuccessDetectionRef.current);
-            }
-          }
+          setLiveMarkers(liveMarkersRef.current);
+          setFrameDiag(diag);
         }
       }
 
@@ -460,11 +530,27 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
       }
 
       // 2c. ALWAYS draw real detected ArUco quadrilaterals + IDs in WEBCAM mode (independent of face detection)
+      // Phase 5 color coding: Maxillary (IDs 3-6) in cyan #22d3ee, Mandibular (IDs 7-10) in amber #f59e0b
       if (mode === 'WEBCAM' && isWebcamReady && coverTransform && liveMarkersRef.current.length > 0) {
         for (const marker of liveMarkersRef.current) {
           const mappedCorners = mapVideoCornersToCanvas(marker.corners, coverTransform);
+          const isMaxilla = marker.id >= 3 && marker.id <= 6;
+          const isMandible = marker.id >= 7 && marker.id <= 10;
+          const strokeColor = isMaxilla ? '#22d3ee' : isMandible ? '#f59e0b' : '#22c55e';
+          const fillColor = isMaxilla
+            ? 'rgba(34, 211, 238, 0.14)'
+            : isMandible
+            ? 'rgba(245, 158, 11, 0.14)'
+            : 'rgba(34, 197, 94, 0.12)';
+          const badgeBgColor = isMaxilla
+            ? 'rgba(8, 51, 68, 0.92)'
+            : isMandible
+            ? 'rgba(69, 26, 3, 0.92)'
+            : 'rgba(6, 78, 59, 0.92)';
+          const badgeTextColor = isMaxilla ? '#cffafe' : isMandible ? '#fef3c7' : '#dcfce7';
+
           ctx.save();
-          ctx.strokeStyle = '#22c55e';
+          ctx.strokeStyle = strokeColor;
           ctx.lineWidth = 3;
           ctx.lineJoin = 'round';
           ctx.beginPath();
@@ -475,31 +561,29 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           ctx.closePath();
           ctx.stroke();
 
-          // Subtle translucent green fill to make live lock unmistakable
-          ctx.fillStyle = 'rgba(34, 197, 94, 0.12)';
+          ctx.fillStyle = fillColor;
           ctx.fill();
 
-          // Corner dots (corner 0 canonical Top-Left highlighted in cyan)
+          // Corner dots (corner 0 canonical Top-Left highlighted distinctly)
           for (let ci = 0; ci < 4; ci++) {
-            ctx.fillStyle = ci === 0 ? '#22d3ee' : '#4ade80';
+            ctx.fillStyle = ci === 0 ? '#ffffff' : strokeColor;
             ctx.beginPath();
             ctx.arc(mappedCorners[ci].x, mappedCorners[ci].y, ci === 0 ? 4.5 : 3.2, 0, Math.PI * 2);
             ctx.fill();
           }
 
-          // Marker ID label anchored cleanly above the quadrilateral
+          // Marker ID label anchored cleanly beside/above the quadrilateral
           const minY = Math.min(mappedCorners[0].y, mappedCorners[1].y, mappedCorners[2].y, mappedCorners[3].y);
           const minX = Math.min(mappedCorners[0].x, mappedCorners[1].x, mappedCorners[2].x, mappedCorners[3].x);
-          const groupTag =
-            marker.id >= 3 && marker.id <= 6
-              ? 'Maxilla'
-              : marker.id >= 7 && marker.id <= 10
-              ? 'Mandible'
-              : marker.id >= 11 && marker.id <= 12
-              ? 'Hanau'
-              : marker.id >= 20 && marker.id <= 28
-              ? 'Calib'
-              : 'DICT_4X4_50';
+          const groupTag = isMaxilla
+            ? 'Maxilla'
+            : isMandible
+            ? 'Mandible'
+            : marker.id >= 11 && marker.id <= 12
+            ? 'Hanau'
+            : marker.id >= 20 && marker.id <= 28
+            ? 'Calib'
+            : 'DICT_4X4_50';
           const tag = `ID #${marker.id} · ${groupTag}`;
 
           ctx.font = 'bold 12px monospace';
@@ -509,12 +593,12 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           const badgeX = Math.max(4, Math.min(w - badgeW - 4, minX));
           const badgeY = Math.max(4, minY - badgeH - 6);
 
-          ctx.fillStyle = 'rgba(6, 78, 59, 0.92)';
+          ctx.fillStyle = badgeBgColor;
           ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
-          ctx.strokeStyle = '#22c55e';
+          ctx.strokeStyle = strokeColor;
           ctx.lineWidth = 1.5;
           ctx.strokeRect(badgeX, badgeY, badgeW, badgeH);
-          ctx.fillStyle = '#dcfce7';
+          ctx.fillStyle = badgeTextColor;
           ctx.fillText(tag, badgeX + 7, badgeY + 14);
           ctx.restore();
         }
@@ -1095,50 +1179,70 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           </div>
         </div>
 
-        {/* Real-time Truthful ArUco & Clinical Target Acquisition Strip */}
+        {/* Real-time Truthful ArUco & Clinical Target Acquisition Strip (Phase 5 Structured Indicators) */}
         <div className="absolute top-16 left-3 right-3 flex items-center justify-center pointer-events-none z-20">
-          <div className="flex items-center gap-1.5 bg-slate-950/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-800 text-[11px] font-mono shadow-lg flex-wrap justify-center">
+          <div className="flex flex-col items-center gap-1 bg-slate-950/92 backdrop-blur-md px-3 py-2 rounded-xl border border-slate-800 text-[11px] font-mono shadow-lg max-w-full">
             {mode === 'WEBCAM' ? (
               <>
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
-                  <span className={`w-2 h-2 rounded-full ${faceTrackingDetected ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                  <span className="text-slate-400">FACE TRACKING:</span>
-                  <span className={faceTrackingDetected ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
-                    {arucoPipelineDiag.faceTrackingStatus}
-                  </span>
+                <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
+                    <span className={`w-2 h-2 rounded-full ${faceTrackingDetected ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                    <span className="text-slate-400">FACE TRACKING:</span>
+                    <span className={faceTrackingDetected ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
+                      {faceTrackingDetected ? 'DETECTED' : 'NOT DETECTED'}
+                    </span>
+                  </div>
+
+                  {actualResolution && (
+                    <div
+                      className={`flex items-center gap-1 px-2 py-0.5 rounded border ${
+                        isLowCameraResolution
+                          ? 'bg-amber-950/80 border-amber-500/60 text-amber-300'
+                          : 'bg-slate-900 border-slate-800 text-slate-300'
+                      }`}
+                    >
+                      <span>RES: {actualResolution.width}×{actualResolution.height}</span>
+                      {autofocusStatus === 'CONTINUOUS' && <span className="text-teal-400">· AF-C</span>}
+                      {isLowCameraResolution && (
+                        <span className="text-amber-300 font-bold">· WARN &lt;1280×720</span>
+                      )}
+                    </div>
+                  )}
+
+                  {frameDiag && (
+                    <div className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400">
+                      <span>PROC: {frameDiag.procWidth}×{frameDiag.procHeight} ({frameDiag.processingTimeMs.toFixed(1)} ms)</span>
+                    </div>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
-                  <span className="text-slate-400">MAXILLARY ARUCO:</span>
-                  <span className={maxillaryAllVisible ? 'text-emerald-400 font-bold' : maxillaDetectedCount > 0 ? 'text-amber-400 font-bold' : 'text-slate-400'}>
-                    {maxillaDetectedCount}/4
-                  </span>
+                {/* Phase 5 Explicit Maxillary & Mandibular Group Readouts */}
+                <div className="flex items-center gap-1.5 flex-wrap justify-center text-[10px]">
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-cyan-950/50 border border-cyan-500/40 text-cyan-200">
+                    <span className="font-bold text-cyan-400">MAXILLARY</span>
+                    <span>Detected IDs: [{maxillaDetectedIds.join(', ')}]</span>
+                    <span>· Count: {maxillaDetectedCount}/4</span>
+                    <span>· Missing: [{maxillaMissingIds.join(', ')}]</span>
+                  </div>
+
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-950/50 border border-amber-500/40 text-amber-200">
+                    <span className="font-bold text-amber-400">MANDIBULAR</span>
+                    <span>Detected IDs: [{mandibleDetectedIds.join(', ')}]</span>
+                    <span>· Count: {mandibleDetectedCount}/4</span>
+                    <span>· Missing: [{mandibleMissingIds.join(', ')}]</span>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
-                  <span className="text-slate-400">MANDIBULAR ARUCO:</span>
-                  <span className={mandibularAllVisible ? 'text-emerald-400 font-bold' : mandibleDetectedCount > 0 ? 'text-amber-400 font-bold' : 'text-slate-400'}>
-                    {mandibleDetectedCount}/4
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
-                  <span className={`w-2 h-2 rounded-full ${liveMarkers.length > 0 ? 'bg-emerald-400' : 'bg-rose-400'}`} />
-                  <span className="text-slate-300">IDs ({ARUCO_DICTIONARY_NAME}):</span>
-                  <span className={liveMarkers.length > 0 ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
-                    {liveMarkers.length > 0 ? `[${detectedIds.join(', ')}]` : arucoPipelineDiag.arucoStatusLabel}
-                  </span>
-                </div>
-
-                {arucoPipelineDiag.qualityWarnings.length > 0 && (
-                  <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-950/70 border border-amber-600/50 text-amber-300">
-                    <span>WARN: {arucoPipelineDiag.qualityWarnings[0]}</span>
+                {/* Candidate counts when 0 markers detected, or quality warning notice */}
+                {liveMarkers.length === 0 && frameDiag?.candidateSummary && (
+                  <div className="text-[10px] text-slate-400">
+                    STATUS: <span className="text-amber-300 font-bold">{arucoPipelineDiag.arucoStatusLabel}</span> · Quads: {frameDiag.candidateSummary.quads} · TooSmall: {frameDiag.candidateSummary.rejectedTooSmall} · Border: {frameDiag.candidateSummary.rejectedBorder} · Dict: {frameDiag.candidateSummary.rejectedDictionary} · Flat: {frameDiag.candidateSummary.rejectedFlat}
                   </div>
                 )}
 
-                {frameDiag && (
-                  <div className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400">
-                    <span>{frameDiag.processingTimeMs.toFixed(1)} ms</span>
+                {arucoPipelineDiag.qualityWarnings.length > 0 && (
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-950/70 border border-amber-600/50 text-amber-300 text-[10px]">
+                    <span>WARN: {arucoPipelineDiag.qualityWarnings[0]}</span>
                   </div>
                 )}
               </>
