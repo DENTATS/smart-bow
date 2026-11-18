@@ -57,7 +57,7 @@ export const SoftwareSelfCorrectionModal: React.FC<SoftwareSelfCorrectionModalPr
               <span>Core Geometric Principle: Phone Position is Mathematically Irrelevant</span>
             </div>
             <p className="text-xs text-emerald-100/90 leading-relaxed">
-              The three face marker groups establish a complete, self-contained 3D coordinate system anchored directly to the patient's skull. It does not matter where the phone is held, what tilt angle it has, or if the operator's hands tremble — as long as all 3 marker groups are visible, the software computes all jaw kinematics relative to the patient's anatomical face frame (<code className="text-emerald-300 font-mono">T_patient</code>), not the phone camera.
+              The patient&apos;s natural facial landmarks establish a contactless 3D anatomical reference frame (<code className="text-emerald-300 font-mono">T_patient</code>), while physical ArUco boards are placed only on the maxillary (IDs 3–6) and mandibular (IDs 7–10) occlusal rims. As long as the face and rim boards are visible, jaw kinematics are computed relative to the patient&apos;s anatomical frame rather than the handheld camera.
             </p>
           </div>
 

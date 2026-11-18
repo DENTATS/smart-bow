@@ -33,6 +33,13 @@ import {
 import { SOURCED_RIM_DATUMS } from '../src/lib/prosthodonticLiterature';
 import { evaluateOpticalDiagnostic, checkCaptureReadiness, evaluateArucoPipelineDiagnostic, OPTICAL_DIAGNOSTIC_DEFINITIONS, CLINICAL_RIM_EXPECTED_IDS } from '../src/lib/opticalDiagnostics';
 import { INDEPENDENT_OPENCV_GROUND_TRUTH_MARKERS } from './independentOpenCvReference';
+import {
+  CANONICAL_FACE_LANDMARK_INDICES,
+  MANUAL_LANDMARK_DEFINITIONS,
+  copyAutoLandmarksToManual,
+  computeManualDerivedGeometry,
+} from '../src/lib/faceLandmarks';
+import { runScannerSelfCheck } from '../src/lib/scannerSelfCheck';
 import { PatientCase, Point3D, ValidationBenchTest, OpticalDiagnosticState } from '../src/types/smartbow';
 
 interface TestResult {
@@ -2083,6 +2090,105 @@ console.log('\nTest Group 23: Contactless Facial Reference, Rim-Only ArUco & 7 L
       zeroFaceDecoded,
     '23k (Phase 6): Full rasterized A4 print sheet decodes all 27 intended markers (16 rim [3-10 primary+spare], 2 Hanau [11-12], 9 Calib [20-28], 0 facial [0-2])',
     `total=${sheetDet.markers.length}, counts=${JSON.stringify(Object.fromEntries(idCounts))}`
+  );
+}
+
+// -----------------------------------------------------------------------------
+// TEST 24: MediaPipe Canonical Indices, Manual Landmarks & Real Scanner Self-Check
+// -----------------------------------------------------------------------------
+console.log('\nTest Group 24: MediaPipe Canonical Indices, Manual Landmarks & Real Scanner Self-Check');
+{
+  // 24a: Canonical MediaPipe Face Mesh indices match specification
+  assert(
+    CANONICAL_FACE_LANDMARK_INDICES.rightIrisCentre === 468 &&
+      CANONICAL_FACE_LANDMARK_INDICES.leftIrisCentre === 473 &&
+      CANONICAL_FACE_LANDMARK_INDICES.noseTip === 1 &&
+      CANONICAL_FACE_LANDMARK_INDICES.subnasale === 2 &&
+      CANONICAL_FACE_LANDMARK_INDICES.nasion === 168 &&
+      CANONICAL_FACE_LANDMARK_INDICES.glabella === 9 &&
+      CANONICAL_FACE_LANDMARK_INDICES.chin === 152 &&
+      CANONICAL_FACE_LANDMARK_INDICES.mouthRight === 61 &&
+      CANONICAL_FACE_LANDMARK_INDICES.mouthLeft === 291 &&
+      CANONICAL_FACE_LANDMARK_INDICES.faceEdgeRight === 234 &&
+      CANONICAL_FACE_LANDMARK_INDICES.faceEdgeLeft === 454,
+    '24a: Canonical MediaPipe face mesh indices match specification (468, 473, 1, 2, 168, 9, 152, 61, 291, 234, 454)'
+  );
+
+  // 24b: Manual 9-point placement order & auto-point seeding ("Use auto points as starting positions")
+  const expectedManualLabels = [
+    'Right pupil',
+    'Left pupil',
+    'Glabella',
+    'Subnasale',
+    'Menton (chin)',
+    'Right tragus',
+    'Left tragus',
+    'Right ala of nose',
+    'Left ala of nose',
+  ];
+  const actualManualLabels = MANUAL_LANDMARK_DEFINITIONS.map((d) => d.label);
+
+  const synthetic478 = Array.from({ length: 478 }, (_, idx) => ({
+    x: 0.2 + (idx % 10) * 0.05,
+    y: 0.2 + Math.floor(idx / 60) * 0.08,
+    z: 0,
+  }));
+  synthetic478[468] = { x: 0.38, y: 0.40, z: 0 };
+  synthetic478[473] = { x: 0.62, y: 0.40, z: 0 };
+  synthetic478[9] = { x: 0.50, y: 0.32, z: 0 };
+  synthetic478[2] = { x: 0.50, y: 0.56, z: 0 };
+  synthetic478[152] = { x: 0.50, y: 0.78, z: 0 };
+  synthetic478[234] = { x: 0.26, y: 0.48, z: 0 };
+  synthetic478[454] = { x: 0.74, y: 0.48, z: 0 };
+  synthetic478[98] = { x: 0.44, y: 0.54, z: 0 };
+  synthetic478[327] = { x: 0.56, y: 0.54, z: 0 };
+
+  const seededManual = copyAutoLandmarksToManual(synthetic478, 1920, 1080, null, 1920, 1080);
+  const derivedGeom = computeManualDerivedGeometry(seededManual, 16 / 9);
+
+  assert(
+    JSON.stringify(actualManualLabels) === JSON.stringify(expectedManualLabels) &&
+      Object.keys(seededManual).length === 9 &&
+      derivedGeom.provenanceLabel === 'derived from manual points' &&
+      derivedGeom.interpupillaryRollDeg === 0 &&
+      derivedGeom.lowerFacialThirdRatioPct !== null &&
+      derivedGeom.rightAlaTragusDeg !== null &&
+      derivedGeom.leftAlaTragusDeg !== null,
+    '24b: Manual 9-point order, auto-to-manual point seeding, and derived interpupillary/ala-tragus calculations work and label "derived from manual points"',
+    `labels=${JSON.stringify(actualManualLabels)}, derived=${JSON.stringify(derivedGeom)}`
+  );
+
+  // 24c: Real Scanner Self-Check PASS on valid live inputs & FAIL on deliberately broken inputs
+  const baseCheckInput = {
+    cameraActive: true,
+    videoWidth: 1920,
+    videoHeight: 1080,
+    cameraError: null,
+    faceModelState: {
+      status: 'READY' as const,
+      delegate: 'GPU' as const,
+      wasmSource: '/mediapipe/wasm',
+      modelLoadTimeMs: 142.5,
+      timeToFirstLandmarksMs: 168.2,
+      errorMessage: null,
+    },
+    fps: 30,
+    arucoFrameTimeMs: 12.4,
+    faceInferenceTimeMs: 8.6,
+  };
+
+  const healthyCheck = runScannerSelfCheck({ ...baseCheckInput, injectedFault: 'NONE' });
+  const brokenCameraCheck = runScannerSelfCheck({ ...baseCheckInput, injectedFault: 'NO_CAMERA' });
+  const brokenDictCheck = runScannerSelfCheck({ ...baseCheckInput, injectedFault: 'WRONG_DICT_6X6' });
+  const brokenBlankCheck = runScannerSelfCheck({ ...baseCheckInput, injectedFault: 'BLANK_FRAME' });
+
+  assert(
+    healthyCheck.overallVerdict === 'PASS' &&
+      brokenCameraCheck.items.find((i) => i.id === 'camera')?.verdict === 'FAIL' &&
+      brokenDictCheck.items.find((i) => i.id === 'marker_pipeline')?.verdict === 'FAIL' &&
+      brokenBlankCheck.items.find((i) => i.id === 'marker_pipeline')?.verdict === 'FAIL',
+    '24c: Scanner Self-Check passes on healthy inputs and fails the matching check when fed no camera, wrong dictionary (DICT_6X6_250), or blank frame',
+    `healthy=${healthyCheck.overallVerdict}, noCam=${brokenCameraCheck.overallVerdict}, wrongDict=${brokenDictCheck.overallVerdict}, blank=${brokenBlankCheck.overallVerdict}`
   );
 }
 

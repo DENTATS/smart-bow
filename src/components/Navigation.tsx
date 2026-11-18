@@ -1,19 +1,27 @@
 /**
- * SmartBow AI - Responsive Navigation (Desktop Top Bar + Mobile Bottom Bar)
- * Conforms to Top Bar Contract and Mobile Touch-First Thumb Zone Ergonomics.
- * Dr. Deepanshu · MDS Prosthodontics · Maitri College of Dentistry
+ * SmartBow AI — Unified Navigation Bar
+ *
+ * Per Phase 1D Simplification:
+ * - Single navigation component (`TopNav.tsx` duplicate removed).
+ * - Default primary screen: Live Scanner.
+ * - All other clinical modules (Dashboard, Facial Assessment, Jaw Relation / VDO / CR / Gothic Arch / 3D Articulator,
+ *   Settings & Validation, Printable Markers, Patient Database, Clinical Rx) live under the "More" menu
+ *   so no clinical feature or patient record workflow is lost.
  */
 
-import React from 'react';
-import { 
-  Home, 
-  Camera, 
-  FolderKanban, 
-  Settings, 
-  FileText, 
-  Smile, 
-  Sparkles, 
-  AlertCircle 
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  Home,
+  Camera,
+  FolderKanban,
+  Settings,
+  FileText,
+  Smile,
+  ChevronDown,
+  Printer,
+  Database,
+  BookOpen,
+  MoreHorizontal,
 } from 'lucide-react';
 
 export type MainNavTab = 'home' | 'assessment' | 'scanner' | 'records' | 'settings';
@@ -24,6 +32,9 @@ interface NavigationProps {
   patientId: string;
   patientName: string;
   onOpenReport: () => void;
+  onOpenMarkers?: () => void;
+  onOpenDatabase?: () => void;
+  onOpenManual?: () => void;
   onEditPatient?: () => void;
   isSimulated?: boolean;
   onLaunchTour?: () => void;
@@ -36,205 +47,191 @@ export const Navigation: React.FC<NavigationProps> = ({
   patientId,
   patientName,
   onOpenReport,
+  onOpenMarkers,
+  onOpenDatabase,
+  onOpenManual,
   onEditPatient,
-  isSimulated = true,
-  onLaunchTour,
-  onToggleDemoMode,
 }) => {
-  const navItems: { id: MainNavTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-    { id: 'home', label: 'Dashboard', icon: Home },
-    { id: 'assessment', label: 'Assessment', icon: Smile },
-    { id: 'scanner', label: 'Scanner', icon: Camera },
-    { id: 'records', label: 'Jaw Relation', icon: FolderKanban },
-    { id: 'settings', label: 'Settings', icon: Settings },
+  const [moreOpen, setMoreOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMoreOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const moreTabs: { id: MainNavTab; label: string; desc: string; icon: React.ComponentType<{ className?: string }> }[] = [
+    { id: 'home', label: 'Patient Dashboard', desc: 'Cases, status & overview', icon: Home },
+    { id: 'assessment', label: 'Facial Assessment', desc: 'Proportions & tooth shade', icon: Smile },
+    { id: 'records', label: 'Jaw Relation & Articulator', desc: 'VDO, CR, Gothic Arch & 3D Articulator', icon: FolderKanban },
+    { id: 'settings', label: 'Settings & Roadmap', desc: 'Calibration, validation & system config', icon: Settings },
   ];
 
+  const activeMoreItem = moreTabs.find((t) => t.id === activeTab);
+
   return (
-    <>
-      {/* Desktop Top Bar Contract: [Wordmark] — [5 single-line links] — [Mode Pill + Tour + Patient + Primary CTA] */}
-      <header className="hidden md:flex items-center justify-between gap-6 px-6 py-3 bg-white border-b border-slate-200 sticky top-0 z-40 no-print">
-        {/* Zone 1: Wordmark */}
-        <div className="flex items-center gap-2.5 shrink-0">
-          <button
-            onClick={() => onSelectTab('home')}
-            className="flex items-center gap-2 text-left group cursor-pointer"
-          >
-            <div className="w-8 h-8 rounded-lg bg-teal-700 text-white flex items-center justify-center font-bold text-sm tracking-tight shadow-sm">
-              SB
-            </div>
-            <div>
-              <span className="text-base font-bold text-slate-900 group-hover:text-teal-700 transition-colors">
-                SmartBow AI
-              </span>
-              <span className="text-[11px] text-slate-500 block -mt-0.5">
-                Clinical Prosthodontics
-              </span>
-            </div>
-          </button>
-        </div>
-
-        {/* Zone 2: Single-line Nav Links */}
-        <nav className="flex items-center gap-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => onSelectTab(item.id)}
-                className={`min-h-[42px] px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-2 cursor-pointer whitespace-nowrap ${
-                  isActive
-                    ? 'bg-slate-100 text-teal-800 font-bold'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                }`}
-              >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-teal-700' : 'text-slate-400'}`} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* Zone 3: Provenance Pill + Tour CTA + Patient + Primary CTA */}
-        <div className="flex items-center gap-2.5 shrink-0">
-          {/* Persistent Live vs. Demo Mode Indicator */}
-          <button
-            onClick={onToggleDemoMode}
-            title="Click to toggle Demo vs. Live Session Mode"
-            className={`px-2.5 py-1 rounded-full text-[11px] font-mono font-bold border transition-colors cursor-pointer flex items-center gap-1.5 ${
-              isSimulated
-                ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
-                : 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
-            }`}
-          >
-            <span className={`w-2 h-2 rounded-full ${isSimulated ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-            <span>{isSimulated ? 'DEMO' : 'LIVE'}</span>
-          </button>
-
-          {/* 4-Day Presentation Tour Button */}
-          {onLaunchTour && (
-            <button
-              onClick={onLaunchTour}
-              className="min-h-[40px] px-3 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
-              title="Launch 4-Day Presentation Tour"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-teal-600" />
-              <span>Tour</span>
-            </button>
-          )}
-
-          {/* Patient Details Pill */}
-          {onEditPatient ? (
-            <button
-              onClick={onEditPatient}
-              title="Click to Edit Patient Details"
-              className="text-right text-xs p-1 rounded-md hover:bg-slate-100 transition-colors cursor-pointer group"
-            >
-              <span className="text-slate-900 font-semibold block group-hover:text-teal-700 transition-colors">
-                {patientName} ✎
-              </span>
-              <span className="text-slate-500 font-mono text-[11px] block">{patientId}</span>
-            </button>
-          ) : (
-            <div className="text-right text-xs">
-              <span className="text-slate-900 font-semibold block">{patientName}</span>
-              <span className="text-slate-500 font-mono text-[11px]">{patientId}</span>
-            </div>
-          )}
-
-          {/* Clinical Lab Rx CTA */}
-          <button
-            onClick={onOpenReport}
-            className="min-h-[40px] px-3.5 py-1.5 bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold rounded-lg shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer"
-          >
-            <FileText className="w-4 h-4" />
-            <span>Clinical Rx</span>
-          </button>
-        </div>
-      </header>
-
-      {/* Mobile Top Header (Minimal Touch Bar) */}
-      <header className="md:hidden flex items-center justify-between px-4 py-2.5 bg-white border-b border-slate-200 sticky top-0 z-40 no-print">
+    <header className="flex items-center justify-between gap-3 px-4 md:px-6 py-2.5 bg-slate-950 text-white border-b border-slate-800 sticky top-0 z-40 no-print">
+      {/* Zone 1: Wordmark -> Returns to Live Scanner */}
+      <div className="flex items-center gap-2.5 shrink-0">
         <button
-          onClick={() => onSelectTab('home')}
-          className="flex items-center gap-2 cursor-pointer"
+          onClick={() => onSelectTab('scanner')}
+          className="flex items-center gap-2 text-left group cursor-pointer"
         >
-          <div className="w-7 h-7 rounded-lg bg-teal-700 text-white flex items-center justify-center font-bold text-xs">
+          <div className="w-8 h-8 rounded-lg bg-teal-600 text-white flex items-center justify-center font-bold text-xs tracking-tight shadow-sm">
             SB
           </div>
-          <span className="text-sm font-bold text-slate-900">SmartBow</span>
+          <div>
+            <span className="text-sm md:text-base font-bold text-white group-hover:text-teal-400 transition-colors">
+              SmartBow AI
+            </span>
+            <span className="text-[10px] text-slate-400 hidden sm:block -mt-0.5">
+              Optical Jaw Relation Scanner
+            </span>
+          </div>
+        </button>
+      </div>
+
+      {/* Zone 2: Primary "Live Scanner" Tab + "More" Menu */}
+      <nav className="flex items-center gap-1.5">
+        <button
+          onClick={() => onSelectTab('scanner')}
+          className={`min-h-[38px] px-3.5 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-2 cursor-pointer ${
+            activeTab === 'scanner'
+              ? 'bg-teal-600 text-white shadow-sm'
+              : 'bg-slate-900 text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800'
+          }`}
+        >
+          <Camera className="w-4 h-4" />
+          <span>Live Scanner</span>
         </button>
 
-        <div className="flex items-center gap-2">
-          {/* Demo/Live pill on mobile */}
+        {/* "More" Dropdown containing all secondary tabs and clinical utilities */}
+        <div className="relative" ref={menuRef}>
           <button
-            onClick={onToggleDemoMode}
-            className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border ${
-              isSimulated
-                ? 'bg-amber-50 text-amber-800 border-amber-300'
-                : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+            onClick={() => setMoreOpen((v) => !v)}
+            className={`min-h-[38px] px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer border ${
+              activeTab !== 'scanner'
+                ? 'bg-slate-800 text-cyan-300 border-cyan-500/50 font-bold'
+                : 'bg-slate-900 text-slate-300 hover:text-white border-slate-800'
             }`}
           >
-            {isSimulated ? 'DEMO' : 'LIVE'}
+            <MoreHorizontal className="w-4 h-4" />
+            <span>{activeMoreItem ? `More: ${activeMoreItem.label}` : 'More'}</span>
+            <ChevronDown className="w-3.5 h-3.5 opacity-75" />
           </button>
 
-          {onLaunchTour && (
-            <button
-              onClick={onLaunchTour}
-              className="p-1.5 bg-teal-50 text-teal-800 rounded-lg border border-teal-200 cursor-pointer"
-              title="Presentation Tour"
-            >
-              <Sparkles className="w-4 h-4 text-teal-600" />
-            </button>
-          )}
+          {moreOpen && (
+            <div className="absolute left-0 sm:left-auto sm:right-0 mt-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl py-2 z-50 text-xs">
+              <div className="px-3 py-1 text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                Clinical Modules
+              </div>
+              {moreTabs.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      onSelectTab(item.id);
+                      setMoreOpen(false);
+                    }}
+                    className={`w-full px-3 py-2 text-left flex items-start gap-2.5 hover:bg-slate-800 transition-colors cursor-pointer ${
+                      isActive ? 'bg-slate-800/90 text-teal-300 font-bold' : 'text-slate-200'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 mt-0.5 text-teal-400 shrink-0" />
+                    <div>
+                      <div className="font-semibold">{item.label}</div>
+                      <div className="text-[10px] text-slate-400">{item.desc}</div>
+                    </div>
+                  </button>
+                );
+              })}
 
-          {onEditPatient ? (
-            <button
-              onClick={onEditPatient}
-              className="text-right text-xs p-1 rounded hover:bg-slate-100 cursor-pointer"
-              title="Edit Patient"
-            >
-              <span className="text-slate-900 font-semibold block text-[11px] truncate max-w-[90px]">
-                {patientName} ✎
-              </span>
-            </button>
-          ) : (
-            <div className="text-right text-xs">
-              <span className="text-slate-900 font-semibold block text-[11px] truncate max-w-[90px]">
-                {patientName}
-              </span>
+              <div className="my-1.5 border-t border-slate-800" />
+              <div className="px-3 py-1 text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                Tools &amp; Exports
+              </div>
+
+              {onOpenMarkers && (
+                <button
+                  onClick={() => {
+                    onOpenMarkers();
+                    setMoreOpen(false);
+                  }}
+                  className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-slate-200 hover:bg-slate-800 cursor-pointer"
+                >
+                  <Printer className="w-4 h-4 text-cyan-400" />
+                  <span>Print ArUco Marker Sheet (A4 PDF)</span>
+                </button>
+              )}
+
+              {onOpenDatabase && (
+                <button
+                  onClick={() => {
+                    onOpenDatabase();
+                    setMoreOpen(false);
+                  }}
+                  className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-slate-200 hover:bg-slate-800 cursor-pointer"
+                >
+                  <Database className="w-4 h-4 text-teal-400" />
+                  <span>Patient Cases Database</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => {
+                  onOpenReport();
+                  setMoreOpen(false);
+                }}
+                className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-slate-200 hover:bg-slate-800 cursor-pointer"
+              >
+                <FileText className="w-4 h-4 text-emerald-400" />
+                <span>Clinical Prescription Report (Rx)</span>
+              </button>
+
+              {onOpenManual && (
+                <button
+                  onClick={() => {
+                    onOpenManual();
+                    setMoreOpen(false);
+                  }}
+                  className="w-full px-3 py-2 text-left flex items-center gap-2.5 text-slate-200 hover:bg-slate-800 cursor-pointer"
+                >
+                  <BookOpen className="w-4 h-4 text-amber-400" />
+                  <span>Help &amp; Clinical User Manual</span>
+                </button>
+              )}
             </div>
           )}
-
-          <button
-            onClick={onOpenReport}
-            className="p-2 bg-teal-700 text-white rounded-lg cursor-pointer"
-            title="Clinical Rx"
-          >
-            <FileText className="w-4 h-4" />
-          </button>
         </div>
-      </header>
-
-      {/* Mobile Bottom Navigation Bar (Thumb Zone) */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 px-2 py-1 flex items-center justify-around z-40 no-print shadow-lg">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => onSelectTab(item.id)}
-              className={`min-h-[48px] flex-1 flex flex-col items-center justify-center gap-0.5 rounded-lg transition-colors cursor-pointer ${
-                isActive ? 'text-teal-700 font-bold' : 'text-slate-500 hover:text-slate-900'
-              }`}
-            >
-              <Icon className={`w-5 h-5 ${isActive ? 'text-teal-700' : 'text-slate-400'}`} />
-              <span className="text-[10px] tracking-tight">{item.label}</span>
-            </button>
-          );
-        })}
       </nav>
-    </>
+
+      {/* Zone 3: Active Patient Pill */}
+      <div className="flex items-center gap-2 shrink-0">
+        {onEditPatient ? (
+          <button
+            onClick={onEditPatient}
+            title="Edit Active Patient Details"
+            className="text-right text-xs px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 transition-colors cursor-pointer"
+          >
+            <span className="text-slate-100 font-semibold block truncate max-w-[120px] sm:max-w-[160px]">
+              {patientName} ✎
+            </span>
+            <span className="text-slate-400 font-mono text-[10px] block">{patientId}</span>
+          </button>
+        ) : (
+          <div className="text-right text-xs px-2 py-1">
+            <span className="text-slate-100 font-semibold block">{patientName}</span>
+            <span className="text-slate-400 font-mono text-[10px]">{patientId}</span>
+          </div>
+        )}
+      </div>
+    </header>
   );
 };

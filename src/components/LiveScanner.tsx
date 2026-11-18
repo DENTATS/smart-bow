@@ -1,42 +1,41 @@
 /**
- * SmartBow AI - Live Camera & Computer Vision Scanner
- * Radically simplified, uncluttered clinical viewfinder with dynamic canvas registration.
- * Primary test device: Motorola Edge 70 Fusion (Android browser).
- * 
- * Hierarchy:
- * 1. Full-bleed camera preview with dynamic resolution.
- * 2. Exactly one tracking-status indicator.
- * 3. Exactly one actionable instruction.
- * 4. Exactly one primary action button (gated by optical safety).
- * 5. Clean secondary controls (camera flip, mode toggle, optional developer diagnostics).
- * 
- * Dr. Deepanshu · MDS Prosthodontics · Maitri College of Dentistry
+ * SmartBow AI — Live Camera & Computer Vision Scanner
+ *
+ * Core Scanner Responsibilities (Phase 1D Simplified):
+ * 1. Camera View: 1920×1080 -> 1280×720 -> default fallback with continuous autofocus (AF-C)
+ *    and truthful resolution display (warns if < 1280×720).
+ * 2. Face Landmarks (AUTO + MANUAL):
+ *    - AUTO: Real MediaPipe FaceLandmarker (@mediapipe/tasks-vision) in VIDEO mode (GPU -> CPU fallback),
+ *      drawing canonical indices (#468, #473, #1, #2, #168, #9, #152, #61, #291, #234, #454).
+ *      No skin-colour heuristic and no window.FaceDetector.
+ *    - MANUAL: Freezes the current video frame, lets user tap/drag 9 ordered anatomical points
+ *      in 0–1 normalized coordinates with a 2.5× zoom loupe, Undo, Reset, and
+ *      "Use auto points as starting positions".
+ * 3. Dental-Rim ArUco Markers (DICT_4X4_50):
+ *    - Maxillary IDs 3, 4, 5, 6 (cyan #22d3ee) and Mandibular IDs 7, 8, 9, 10 (amber #f59e0b).
+ *    - Independent of face tracking; draws every decoded marker immediately; shows Detected IDs,
+ *      Count n/4, Missing per group, and factual failure summary when 0 markers are found.
+ * 4. Self-Check: Runs real runtime tests (Camera, MediaPipe model, Generator->Detector round-trip,
+ *    Dictionary bounds & negative checks, FPS/timing) with PASS/WARN/FAIL and measured values.
+ * 5. Single Settings/Calibration entry + Help link + Advanced menu.
  */
 
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { 
-  Camera, 
-  RefreshCw, 
-  CheckCircle2, 
-  AlertCircle, 
-  Sliders, 
-  RotateCcw, 
-  Check, 
-  X, 
+import {
+  Camera,
+  RefreshCw,
+  Check,
   Settings2,
-  Sparkles,
-  Info,
   ShieldCheck,
-  Zap,
-  Activity,
-  Layers,
+  HelpCircle,
+  Sliders,
+  AlertCircle,
+  Snowflake,
+  Play,
   ArrowRight,
-  Target,
-  Grid
+  Printer,
 } from 'lucide-react';
-import { RealtimeFaceTracker, FaceTrackingResult } from '../lib/faceTrackingEngine';
 import { DentitionState, CameraCalibrationSettings, MarkerPose } from '../types/smartbow';
-import { loadCameraCalibration } from '../lib/cameraCalibration';
 import {
   detectArucoMarkersDetailed,
   ArucoFrameDiagnostics,
@@ -44,7 +43,6 @@ import {
   mapVideoCornersToCanvas,
   ViewportCoverTransform,
 } from '../lib/arucoDetector';
-import { ARUCO_DICTIONARY_NAME } from '../lib/arucoDict';
 import {
   evaluateOpticalDiagnostic,
   evaluateArucoPipelineDiagnostic,
@@ -52,8 +50,19 @@ import {
   CLINICAL_RIM_EXPECTED_IDS,
 } from '../lib/opticalDiagnostics';
 import { OpticalDiagnosticInfo } from '../types/smartbow';
-import { CameraCalibrationModal } from './CameraCalibrationModal';
-import { SoftwareSelfCorrectionModal } from './SoftwareSelfCorrectionModal';
+import {
+  MediaPipeFaceLandmarkController,
+  MediaPipeFaceLandmarkerState,
+  MANUAL_LANDMARK_DEFINITIONS,
+  ManualLandmarkKey,
+  ManualLandmarkSet,
+  NormalizedPoint2D,
+  copyAutoLandmarksToManual,
+  drawAutoFaceLandmarksOnCanvas,
+  drawManualFaceLandmarksOnCanvas,
+} from '../lib/faceLandmarks';
+import { FaceLandmarkPanel } from './FaceLandmarkPanel';
+import { ScannerSelfCheckModal } from './ScannerSelfCheckModal';
 
 interface LiveScannerProps {
   dentitionState?: DentitionState;
@@ -68,35 +77,34 @@ interface LiveScannerProps {
   onUpdateMidline: (shift: number) => void;
   onRecordCrTrial: () => void;
   onNavigateToTab: (tab: 'home' | 'scanner' | 'records' | 'settings') => void;
+  calibrationSettings: CameraCalibrationSettings;
+  onOpenCalibration: () => void;
+  onOpenManual?: () => void;
+  onOpenMarkers?: () => void;
   developerMode?: boolean;
 }
 
 export const LiveScanner: React.FC<LiveScannerProps> = ({
-  dentitionState = 'EDENTULOUS',
-  onUpdateDentition,
   vdoMm,
   onUpdateVdo,
   tiltMLDeg,
   onUpdateTiltML,
-  tiltAPDeg,
-  onUpdateTiltAP,
-  midlineShiftMm,
-  onUpdateMidline,
   onRecordCrTrial,
   onNavigateToTab,
-  developerMode = false,
+  calibrationSettings,
+  onOpenCalibration,
+  onOpenManual,
+  onOpenMarkers,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const trackerRef = useRef<RealtimeFaceTracker>(new RealtimeFaceTracker());
+  const frozenFrameCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const mpControllerRef = useRef<MediaPipeFaceLandmarkController>(new MediaPipeFaceLandmarkController());
 
-  // Operational states
-  const [mode, setMode] = useState<'SIMULATION' | 'WEBCAM'>('SIMULATION');
-  const [isMarkerTestMode, setIsMarkerTestMode] = useState<boolean>(false);
-  const [testStep, setTestStep] = useState<'SINGLE' | 'MULTI'>('SINGLE');
-  const [testPreset, setTestPreset] = useState<'ANY' | 'MAXILLA' | 'MANDIBLE' | 'CLINICAL_ALL' | 'CALIBRATION'>('ANY');
-  const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('environment');
+  // Mode: Defaults to live WEBCAM scanner; SIMULATION is available under Advanced menu
+  const [mode, setMode] = useState<'WEBCAM' | 'SIMULATION'>('WEBCAM');
+  const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('user');
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [cameraActive, setCameraActive] = useState<boolean>(false);
@@ -105,69 +113,266 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
   const [cameraPermissionError, setCameraPermissionError] = useState<string | null>(null);
   const [fps, setFps] = useState<number>(30);
 
+  // Face Tracking State (MediaPipe AUTO + 9-Point MANUAL)
+  const [faceMode, setFaceMode] = useState<'AUTO' | 'MANUAL'>('AUTO');
+  const [mpModelState, setMpModelState] = useState<MediaPipeFaceLandmarkerState>(() =>
+    mpControllerRef.current.getState()
+  );
+  const [autoFaceDetected, setAutoFaceDetected] = useState<boolean>(false);
+  const [autoFaceRollDeg, setAutoFaceRollDeg] = useState<number>(0);
+  const [faceInferenceTimeMs, setFaceInferenceTimeMs] = useState<number>(0);
+  const [autoFailedFor3Sec, setAutoFailedFor3Sec] = useState<boolean>(false);
+
+  const autoLandmarksRef = useRef<Array<{ x: number; y: number; z: number }>>([]);
+  const lastValidAutoLandmarksRef = useRef<Array<{ x: number; y: number; z: number }>>([]);
+  const [hasAutoLandmarksAvailable, setHasAutoLandmarksAvailable] = useState<boolean>(false);
+  const lastAutoSuccessTimeRef = useRef<number>(performance.now());
+  const coverTransformRef = useRef<ViewportCoverTransform | null>(null);
+
+  // Manual Landmark Placement State (Normalized 0..1 coordinates)
+  const [manualPoints, setManualPoints] = useState<ManualLandmarkSet>(() => {
+    try {
+      const saved = localStorage.getItem('smartbow_manual_landmarks');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [manualHistory, setManualHistory] = useState<ManualLandmarkKey[]>([]);
+  const [activeDragKey, setActiveDragKey] = useState<ManualLandmarkKey | null>(null);
+  const [hoverNormPt, setHoverNormPt] = useState<NormalizedPoint2D | null>(null);
+  const [hasFrozenFrame, setHasFrozenFrame] = useState<boolean>(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('smartbow_manual_landmarks', JSON.stringify(manualPoints));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [manualPoints]);
+
   // Live Optical ArUco Markers detected directly from camera stream
   const [liveMarkers, setLiveMarkers] = useState<MarkerPose[]>([]);
   const [frameDiag, setFrameDiag] = useState<ArucoFrameDiagnostics | null>(null);
-  const [lastSuccessDetectionTime, setLastSuccessDetectionTime] = useState<number | null>(null);
   const [actualResolution, setActualResolution] = useState<{ width: number; height: number } | null>(null);
   const [autofocusStatus, setAutofocusStatus] = useState<'CONTINUOUS' | 'DEFAULT' | 'UNSUPPORTED'>('DEFAULT');
   const liveMarkersRef = useRef<MarkerPose[]>([]);
-  const lastSuccessDetectionRef = useRef<number | null>(null);
   const decayCountRef = useRef<number>(0);
 
-  // Marker telemetry & CAD specs inspector modal state
-  const [isMarkerInspectorOpen, setIsMarkerInspectorOpen] = useState<boolean>(false);
+  // Self-Check & Advanced Menu states
+  const [isSelfCheckOpen, setIsSelfCheckOpen] = useState<boolean>(false);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
+  const [simVdo, setSimVdo] = useState<number>(vdoMm ?? 62.5);
+  const [simTiltML, setSimTiltML] = useState<number>(tiltMLDeg ?? 1.4);
 
   // Capture feedback states
   const [shutterTriggered, setShutterTriggered] = useState<boolean>(false);
   const [trialToast, setTrialToast] = useState<string | null>(null);
   const [trialCount, setTrialCount] = useState<number>(1);
 
-  // Developer mode & diagnostics drawer
-  const [isDevDrawerOpen, setIsDevDrawerOpen] = useState<boolean>(false);
-  const [isCalibrationModalOpen, setIsCalibrationModalOpen] = useState<boolean>(false);
-  const [isSelfCorrectionModalOpen, setIsSelfCorrectionModalOpen] = useState<boolean>(false);
+  // Initialize MediaPipe FaceLandmarker on mount
+  useEffect(() => {
+    const controller = mpControllerRef.current;
+    const unsubscribe = controller.subscribe((st) => setMpModelState(st));
+    controller.initialize();
+    return unsubscribe;
+  }, []);
 
-  // Telemetry published to React
-  const [trackingData, setTrackingData] = useState<FaceTrackingResult | null>(null);
-  const lastTelemetryTimestampRef = useRef<number>(Date.now());
+  // Freeze current video or canvas frame when entering MANUAL mode
+  const captureFrozenFrame = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) return;
 
-  // Simulation parameters (only adjusted in simulation mode)
-  const [simVdo, setSimVdo] = useState<number>(vdoMm ?? 62.5);
-  const [simTiltML, setSimTiltML] = useState<number>(tiltMLDeg ?? 1.4);
-  const [simTiltAP, setSimTiltAP] = useState<number>(tiltAPDeg ?? 4.8);
-  const [simMidline, setSimMidline] = useState<number>(midlineShiftMm ?? 0.3);
-  const [simDistance, setSimDistance] = useState<number>(48);
-  const [simIlluminationIRE, setSimIlluminationIRE] = useState<number>(140);
+    if (!frozenFrameCanvasRef.current) {
+      frozenFrameCanvasRef.current = document.createElement('canvas');
+    }
+    const frozen = frozenFrameCanvasRef.current;
+    frozen.width = canvas.width;
+    frozen.height = canvas.height;
+    const fCtx = frozen.getContext('2d');
+    if (!fCtx) return;
 
-  // Calibration settings
-  const [calibrationSettings, setCalibrationSettings] = useState<CameraCalibrationSettings>(() => loadCameraCalibration());
+    const v = videoRef.current;
+    if (mode === 'WEBCAM' && v && v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0) {
+      const shouldMirror = cameraFacing === 'user';
+      const tf = computeCoverTransform(v.videoWidth, v.videoHeight, frozen.width, frozen.height, shouldMirror);
+      if (shouldMirror) {
+        fCtx.save();
+        fCtx.translate(frozen.width, 0);
+        fCtx.scale(-1, 1);
+        fCtx.drawImage(v, tf.drawX, tf.drawY, tf.drawW, tf.drawH);
+        fCtx.restore();
+      } else {
+        fCtx.drawImage(v, tf.drawX, tf.drawY, tf.drawW, tf.drawH);
+      }
+      setHasFrozenFrame(true);
+    } else {
+      // Fallback: copy current canvas appearance so manual placement always works
+      fCtx.fillStyle = '#0f172a';
+      fCtx.fillRect(0, 0, frozen.width, frozen.height);
+      const cx = frozen.width * 0.5;
+      const cy = frozen.height * 0.46;
+      const rx = Math.min(frozen.width * 0.22, 130);
+      const ry = rx * 1.32;
+      fCtx.strokeStyle = '#334155';
+      fCtx.lineWidth = 2;
+      fCtx.beginPath();
+      fCtx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      fCtx.stroke();
+      setHasFrozenFrame(true);
+    }
+  }, [mode, cameraFacing]);
 
-  // Truthful Live Optical ArUco & Contactless Natural Face Statuses (deduplicated per group)
-  const detectedIds = Array.from(new Set(liveMarkers.map(m => m.id))).sort((a, b) => a - b);
-  const maxillaDetectedIds = [3, 4, 5, 6].filter(id => detectedIds.includes(id));
-  const maxillaMissingIds = [3, 4, 5, 6].filter(id => !detectedIds.includes(id));
-  const mandibleDetectedIds = [7, 8, 9, 10].filter(id => detectedIds.includes(id));
-  const mandibleMissingIds = [7, 8, 9, 10].filter(id => !detectedIds.includes(id));
+  const handleSwitchFaceMode = useCallback(
+    (nextMode: 'AUTO' | 'MANUAL') => {
+      if (nextMode === 'MANUAL') {
+        captureFrozenFrame();
+      }
+      setFaceMode(nextMode);
+    },
+    [captureFrozenFrame]
+  );
+
+  // Copy MediaPipe auto points into manual landmarks
+  const handleCopyAutoPointsToManual = useCallback(() => {
+    const sourceLandmarks =
+      autoLandmarksRef.current.length >= 468
+        ? autoLandmarksRef.current
+        : lastValidAutoLandmarksRef.current;
+    if (sourceLandmarks.length < 468) return;
+
+    const vW = videoRef.current?.videoWidth || canvasRef.current?.width || 1280;
+    const vH = videoRef.current?.videoHeight || canvasRef.current?.height || 720;
+    const cW = canvasRef.current?.width || 1280;
+    const cH = canvasRef.current?.height || 720;
+
+    const copied = copyAutoLandmarksToManual(
+      sourceLandmarks,
+      vW,
+      vH,
+      coverTransformRef.current,
+      cW,
+      cH
+    );
+    setManualPoints(copied);
+    setManualHistory(MANUAL_LANDMARK_DEFINITIONS.map((d) => d.key));
+  }, []);
+
+  const handleUndoManualPoint = useCallback(() => {
+    setManualHistory((prev) => {
+      if (prev.length === 0) return prev;
+      const lastKey = prev[prev.length - 1];
+      setManualPoints((pts) => {
+        const next = { ...pts };
+        delete next[lastKey];
+        return next;
+      });
+      return prev.slice(0, -1);
+    });
+  }, []);
+
+  const handleResetManualPoints = useCallback(() => {
+    setManualPoints({});
+    setManualHistory([]);
+  }, []);
+
+  // Pointer interaction on canvas for Manual Landmark placement & dragging
+  const getNormalizedCanvasPoint = (e: React.PointerEvent<HTMLCanvasElement>): NormalizedPoint2D | null => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: Math.max(0.005, Math.min(0.995, (e.clientX - rect.left) / rect.width)),
+      y: Math.max(0.005, Math.min(0.995, (e.clientY - rect.top) / rect.height)),
+    };
+  };
+
+  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (faceMode !== 'MANUAL') return;
+    const pt = getNormalizedCanvasPoint(e);
+    if (!pt || !canvasRef.current) return;
+
+    const cW = canvasRef.current.clientWidth || 640;
+    const cH = canvasRef.current.clientHeight || 480;
+
+    // 1. Check if pointer is grabbing an already-placed landmark (within 22px radius)
+    let closestKey: ManualLandmarkKey | null = null;
+    let minDistPx = 22;
+    for (const def of MANUAL_LANDMARK_DEFINITIONS) {
+      const existing = manualPoints[def.key];
+      if (!existing) continue;
+      const dPx = Math.hypot((existing.x - pt.x) * cW, (existing.y - pt.y) * cH);
+      if (dPx < minDistPx) {
+        minDistPx = dPx;
+        closestKey = def.key;
+      }
+    }
+
+    if (closestKey) {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setActiveDragKey(closestKey);
+      setHoverNormPt(pt);
+      setManualPoints((prev) => ({ ...prev, [closestKey!]: pt }));
+      return;
+    }
+
+    // 2. Otherwise place the next unplaced point in the 9-point sequence
+    const nextUnplaced = MANUAL_LANDMARK_DEFINITIONS.find((d) => !manualPoints[d.key]);
+    if (nextUnplaced) {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setActiveDragKey(nextUnplaced.key);
+      setHoverNormPt(pt);
+      setManualPoints((prev) => ({ ...prev, [nextUnplaced.key]: pt }));
+      setManualHistory((prev) => [...prev.filter((k) => k !== nextUnplaced.key), nextUnplaced.key]);
+    }
+  };
+
+  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (faceMode !== 'MANUAL') return;
+    const pt = getNormalizedCanvasPoint(e);
+    if (!pt) return;
+    setHoverNormPt(pt);
+
+    if (activeDragKey) {
+      setManualPoints((prev) => ({ ...prev, [activeDragKey]: pt }));
+    }
+  };
+
+  const handleCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (faceMode !== 'MANUAL') return;
+    if (activeDragKey) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // Ignore if not captured
+      }
+      setActiveDragKey(null);
+    }
+  };
+
+  // Deduplicated Marker Groups (Maxillary 3..6, Mandibular 7..10)
+  const detectedIds = Array.from(new Set(liveMarkers.map((m) => m.id))).sort((a, b) => a - b);
+  const maxillaDetectedIds = [3, 4, 5, 6].filter((id) => detectedIds.includes(id));
+  const maxillaMissingIds = [3, 4, 5, 6].filter((id) => !detectedIds.includes(id));
+  const mandibleDetectedIds = [7, 8, 9, 10].filter((id) => detectedIds.includes(id));
+  const mandibleMissingIds = [7, 8, 9, 10].filter((id) => !detectedIds.includes(id));
   const maxillaDetectedCount = maxillaDetectedIds.length;
   const mandibleDetectedCount = mandibleDetectedIds.length;
   const maxillaryAllVisible = maxillaDetectedCount === 4;
   const mandibularAllVisible = mandibleDetectedCount === 4;
   const hasAnyOpticalMarkers = liveMarkers.length > 0;
-  const faceTrackingDetected = trackingData?.detected ?? false;
+
+  const manualPlacedCount = MANUAL_LANDMARK_DEFINITIONS.filter((d) => Boolean(manualPoints[d.key])).length;
+  const effectiveFaceReady =
+    faceMode === 'AUTO'
+      ? mode === 'SIMULATION'
+        ? true
+        : autoFaceDetected
+      : manualPlacedCount >= 5; // Pupils + Glabella + Subnasale + Menton minimum
+
   const isLowCameraResolution =
     actualResolution !== null && (actualResolution.width < 1280 || actualResolution.height < 720);
-
-  const expectedTestIds: number[] =
-    testStep === 'SINGLE'
-      ? (testPreset === 'MANDIBLE' ? [7] : testPreset === 'CALIBRATION' ? [20] : [3])
-      : testPreset === 'MAXILLA'
-      ? [3, 4, 5, 6]
-      : testPreset === 'MANDIBLE'
-      ? [7, 8, 9, 10]
-      : testPreset === 'CALIBRATION'
-      ? [20, 21, 22, 23, 24, 25, 26, 27, 28]
-      : CLINICAL_RIM_EXPECTED_IDS;
 
   const arucoPipelineDiag: LiveArucoDiagnosticStatus = evaluateArucoPipelineDiagnostic({
     cameraActive,
@@ -175,34 +380,30 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     cameraError: cameraPermissionError,
     frameDiag,
     detectedIds,
-    expectedIds: isMarkerTestMode ? expectedTestIds : CLINICAL_RIM_EXPECTED_IDS,
-    faceDetected: faceTrackingDetected,
+    expectedIds: CLINICAL_RIM_EXPECTED_IDS,
+    faceDetected: effectiveFaceReady,
   });
-
-  // Optical Diagnostics evaluation (Clinical Shutter Safety Gate)
-  const telemetryAgeMs = Date.now() - lastTelemetryTimestampRef.current;
 
   const opticalDiagnostic: OpticalDiagnosticInfo = evaluateOpticalDiagnostic({
     mode,
     cameraActive: cameraActive && cameraPoweredOn,
     cameraError: cameraPermissionError,
-    faceDetected: faceTrackingDetected,
+    faceDetected: effectiveFaceReady,
     arucoDetected: mode === 'SIMULATION' ? true : hasAnyOpticalMarkers,
     maxillaryComplete: mode === 'SIMULATION' ? true : maxillaryAllVisible,
     mandibularComplete: mode === 'SIMULATION' ? true : mandibularAllVisible,
     cameraCalibrated: calibrationSettings.isCalibrated,
     markerSizeVerified: true,
-    trackingStable: (trackingData?.frameQualityScore ?? 100) >= 35,
-    telemetryAgeMs,
+    trackingStable: true,
+    telemetryAgeMs: 0,
   });
 
-  // Handle Dynamic Canvas Resize based on container dimensions
+  // Dynamic Canvas Resize
   const updateCanvasDimensions = useCallback(() => {
     if (!containerRef.current || !canvasRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
 
-    // Use devicePixelRatio capped at 2 for mobile GPU performance
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const targetW = Math.floor(rect.width * dpr);
     const targetH = Math.floor(rect.height * dpr);
@@ -223,17 +424,19 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     };
   }, [updateCanvasDimensions]);
 
-  // Enumerate video devices where supported
+  // Enumerate video devices
   useEffect(() => {
     if (typeof navigator !== 'undefined' && navigator.mediaDevices?.enumerateDevices) {
-      navigator.mediaDevices.enumerateDevices().then(devices => {
-        const vDevices = devices.filter(d => d.kind === 'videoinput');
-        setVideoDevices(vDevices);
-      }).catch(err => console.warn('Could not enumerate video devices:', err));
+      navigator.mediaDevices
+        .enumerateDevices()
+        .then((devices) => {
+          setVideoDevices(devices.filter((d) => d.kind === 'videoinput'));
+        })
+        .catch(() => {});
     }
   }, [cameraActive]);
 
-  // Webcam stream lifecycle with Phase 5 fallback sequence (1920x1080 -> 1280x720 -> defaults) & continuous autofocus
+  // Webcam stream lifecycle (1920x1080 -> 1280x720 -> defaults) & continuous autofocus
   useEffect(() => {
     let stream: MediaStream | null = null;
     let isCancelled = false;
@@ -254,24 +457,19 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
             ? { deviceId: { exact: selectedDeviceId } }
             : { facingMode: cameraFacing };
 
-          // Phase 5 Step 1 -> 2 -> 3 fallback sequence
           const constraintCandidates: MediaStreamConstraints[] = [
-            // 1. Request ideal 1920x1080 for 6.5mm dental-rim marker legibility
             {
               video: { ...baseSourceConstraint, width: { ideal: 1920 }, height: { ideal: 1080 } },
               audio: false,
             },
-            // 2. On OverconstrainedError / constraint failure, retry at 1280x720
             {
               video: { ...baseSourceConstraint, width: { ideal: 1280 }, height: { ideal: 720 } },
               audio: false,
             },
-            // 3a. Retry with browser defaults for selected device / facingMode
             {
               video: baseSourceConstraint,
               audio: false,
             },
-            // 3b. Final fallback: pure browser default video: true
             {
               video: true,
               audio: false,
@@ -285,7 +483,6 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
               if (stream) break;
             } catch (err: any) {
               lastErr = err;
-              // Do not retry if the user explicitly denied camera permission
               if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
                 throw err;
               }
@@ -297,11 +494,10 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           }
 
           if (isCancelled) {
-            stream.getTracks().forEach(t => t.stop());
+            stream.getTracks().forEach((t) => t.stop());
             return;
           }
 
-          // Phase 5: Request continuous autofocus where supported via track.getCapabilities() & applyConstraints()
           const videoTrack = stream.getVideoTracks()[0];
           if (videoTrack && typeof videoTrack.getCapabilities === 'function') {
             try {
@@ -333,17 +529,16 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
             videoRef.current.onloadedmetadata = syncVideoMetadata;
             await videoRef.current.play();
             setCameraActive(true);
+            lastAutoSuccessTimeRef.current = performance.now();
             syncVideoMetadata();
 
-            // Refresh device list after permission granted
             if (navigator.mediaDevices?.enumerateDevices) {
               const devices = await navigator.mediaDevices.enumerateDevices();
-              setVideoDevices(devices.filter(d => d.kind === 'videoinput'));
+              setVideoDevices(devices.filter((d) => d.kind === 'videoinput'));
             }
           }
         } catch (err: any) {
           if (!isCancelled) {
-            console.warn('Webcam stream unavailable:', err);
             let errMsg = 'Camera permission denied or camera device unavailable';
             if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
               errMsg = 'Permission denied. Please allow camera access in browser permissions.';
@@ -351,8 +546,6 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
               errMsg = 'No video capture hardware or camera sensor found on this device.';
             } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
               errMsg = 'Camera hardware is busy or in use by another application.';
-            } else if (err.name === 'OverconstrainedError') {
-              errMsg = 'Selected camera constraints (resolution/facing) not supported by hardware.';
             }
             setCameraPermissionError(errMsg);
             setCameraActive(false);
@@ -368,7 +561,7 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
       setFrameDiag(null);
       if (videoRef.current?.srcObject) {
         const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-        tracks.forEach(t => t.stop());
+        tracks.forEach((t) => t.stop());
         videoRef.current.srcObject = null;
       }
     }
@@ -376,24 +569,23 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
     return () => {
       isCancelled = true;
       if (stream) {
-        stream.getTracks().forEach(t => t.stop());
+        stream.getTracks().forEach((t) => t.stop());
       }
       if (videoRef.current?.srcObject) {
         const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-        tracks.forEach(t => t.stop());
+        tracks.forEach((t) => t.stop());
         videoRef.current.srcObject = null;
       }
     };
   }, [mode, cameraPoweredOn, cameraFacing, selectedDeviceId, retryTrigger, updateCanvasDimensions]);
 
-  // Main 60 FPS Render Loop
+  // Main Render & CV Loop
   useEffect(() => {
     let animationFrameId: number;
     let lastTime = performance.now();
     let frameCount = 0;
-    let lastUiUpdate = 0;
 
-    const render = async (time: number) => {
+    const render = (time: number) => {
       frameCount++;
       if (time - lastTime >= 1000) {
         setFps(Math.round((frameCount * 1000) / (time - lastTime)));
@@ -414,18 +606,20 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
 
       const w = canvas.width;
       const h = canvas.height;
-
-      // 1. Draw Background: Webcam or Calibrated Clinical Silhouette
       const isWebcamReady = mode === 'WEBCAM' && Boolean(videoRef.current && videoRef.current.readyState >= 2);
       let coverTransform: ViewportCoverTransform | null = null;
 
-      if (isWebcamReady && videoRef.current) {
+      // 1. Draw Background: Frozen Manual Frame, Live Webcam Feed, or Simulation Backdrop
+      if (faceMode === 'MANUAL' && hasFrozenFrame && frozenFrameCanvasRef.current) {
+        ctx.drawImage(frozenFrameCanvasRef.current, 0, 0, w, h);
+      } else if (isWebcamReady && videoRef.current) {
         const v = videoRef.current;
         const vW = v.videoWidth || 640;
         const vH = v.videoHeight || 480;
         const shouldMirror = cameraFacing === 'user';
 
         coverTransform = computeCoverTransform(vW, vH, w, h, shouldMirror);
+        coverTransformRef.current = coverTransform;
         if (shouldMirror) {
           ctx.save();
           ctx.translate(w, 0);
@@ -436,101 +630,29 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           ctx.drawImage(v, coverTransform.drawX, coverTransform.drawY, coverTransform.drawW, coverTransform.drawH);
         }
       } else {
-        // Clinical Patient Viewport (Dark Minimal Background)
         ctx.fillStyle = '#090d16';
         ctx.fillRect(0, 0, w, h);
-
-        // Subtle guidance grid
-        ctx.strokeStyle = 'rgba(30, 41, 59, 0.2)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        const step = Math.max(30, Math.floor(w / 16));
-        for (let x = 0; x < w; x += step) {
-          ctx.moveTo(x, 0);
-          ctx.lineTo(x, h);
-        }
-        for (let y = 0; y < h; y += step) {
-          ctx.moveTo(0, y);
-          ctx.lineTo(w, y);
-        }
-        ctx.stroke();
-
-        // Clinical Patient Silhouette
-        const centerX = w / 2;
-        const centerY = h / 2 - Math.min(20, h * 0.05);
-        const headRadiusX = Math.min(w * 0.24, 140);
-        const headRadiusY = headRadiusX * 1.3;
-
-        ctx.beginPath();
-        ctx.ellipse(centerX, centerY, headRadiusX, headRadiusY, 0, 0, Math.PI * 2);
-        ctx.fillStyle = '#111827';
-        ctx.fill();
-        ctx.strokeStyle = '#1e293b';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        // Shoulders
-        ctx.beginPath();
-        ctx.moveTo(centerX - headRadiusX * 1.6, h);
-        ctx.quadraticCurveTo(centerX - headRadiusX * 1.2, centerY + headRadiusY * 0.9, centerX, centerY + headRadiusY * 0.9);
-        ctx.quadraticCurveTo(centerX + headRadiusX * 1.2, centerY + headRadiusY * 0.9, centerX + headRadiusX * 1.6, h);
-        ctx.fillStyle = '#0f172a';
-        ctx.fill();
       }
 
-      // Compute UI publish gate for expensive non-marker face telemetry (80 ms throttle)
-      const shouldPublishUi = time - lastUiUpdate > 80;
-
-      // 2. Real-Time Optical ArUco Marker Detection on live webcam feed (decoupled from face tracking)
-      // Phase 5: Update detection state on EVERY detection run (never hide fresh detections behind the 80ms throttle)
-      if (isWebcamReady && videoRef.current) {
+      // 2. Real-Time Optical ArUco Marker Detection (Always independent of face tracking)
+      if (isWebcamReady && videoRef.current && faceMode === 'AUTO') {
         if (frameCount % 2 === 0 || liveMarkersRef.current.length === 0) {
           const diag = detectArucoMarkersDetailed(videoRef.current, calibrationSettings);
           if (diag.markers.length > 0) {
             liveMarkersRef.current = diag.markers;
             decayCountRef.current = 0;
-            lastSuccessDetectionRef.current = Date.now();
-            setLastSuccessDetectionTime(lastSuccessDetectionRef.current);
           } else {
             decayCountRef.current++;
             if (decayCountRef.current >= 2) {
               liveMarkersRef.current = [];
             }
           }
-
           setLiveMarkers(liveMarkersRef.current);
           setFrameDiag(diag);
         }
       }
 
-      // 2b. Track Natural Facial Landmarks via RealtimeFaceTracker (receives live rim markers)
-      const tracker = trackerRef.current;
-      const tracking = await tracker.trackFrame(
-        isWebcamReady ? videoRef.current : null,
-        w,
-        h,
-        simVdo,
-        { ml: simTiltML, ap: simTiltAP, midline: simMidline },
-        mode === 'WEBCAM',
-        0,
-        calibrationSettings,
-        simDistance,
-        'DEMO_LOCK',
-        0.65,
-        0,
-        true,
-        simIlluminationIRE,
-        liveMarkersRef.current
-      );
-
-      if (shouldPublishUi) {
-        lastUiUpdate = time;
-        lastTelemetryTimestampRef.current = Date.now();
-        setTrackingData(tracking);
-      }
-
-      // 2c. ALWAYS draw real detected ArUco quadrilaterals + IDs in WEBCAM mode (independent of face detection)
-      // Phase 5 color coding: Maxillary (IDs 3-6) in cyan #22d3ee, Mandibular (IDs 7-10) in amber #f59e0b
+      // 3. Draw Real Decoded ArUco Quadrilaterals & IDs Immediately (Maxilla cyan #22d3ee, Mandible amber #f59e0b)
       if (mode === 'WEBCAM' && isWebcamReady && coverTransform && liveMarkersRef.current.length > 0) {
         for (const marker of liveMarkersRef.current) {
           const mappedCorners = mapVideoCornersToCanvas(marker.corners, coverTransform);
@@ -560,11 +682,9 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           ctx.lineTo(mappedCorners[3].x, mappedCorners[3].y);
           ctx.closePath();
           ctx.stroke();
-
           ctx.fillStyle = fillColor;
           ctx.fill();
 
-          // Corner dots (corner 0 canonical Top-Left highlighted distinctly)
           for (let ci = 0; ci < 4; ci++) {
             ctx.fillStyle = ci === 0 ? '#ffffff' : strokeColor;
             ctx.beginPath();
@@ -572,18 +692,9 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
             ctx.fill();
           }
 
-          // Marker ID label anchored cleanly beside/above the quadrilateral
           const minY = Math.min(mappedCorners[0].y, mappedCorners[1].y, mappedCorners[2].y, mappedCorners[3].y);
           const minX = Math.min(mappedCorners[0].x, mappedCorners[1].x, mappedCorners[2].x, mappedCorners[3].x);
-          const groupTag = isMaxilla
-            ? 'Maxilla'
-            : isMandible
-            ? 'Mandible'
-            : marker.id >= 11 && marker.id <= 12
-            ? 'Hanau'
-            : marker.id >= 20 && marker.id <= 28
-            ? 'Calib'
-            : 'DICT_4X4_50';
+          const groupTag = isMaxilla ? 'Maxilla' : isMandible ? 'Mandible' : 'DICT_4X4_50';
           const tag = `ID #${marker.id} · ${groupTag}`;
 
           ctx.font = 'bold 12px monospace';
@@ -604,314 +715,48 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
         }
       }
 
-      // 3. Clinical Anatomical & Marker Visual Overlays
-      if (tracking.detected) {
-        const fbX = tracking.faceBox.x * w;
-        const fbY = tracking.faceBox.y * h;
-        const fbW = tracking.faceBox.width * w;
-        const fbH = tracking.faceBox.height * h;
-        const cornerLen = Math.max(14, Math.min(32, fbW * 0.18));
-
-        // High-contrast corner brackets (Teal)
-        ctx.strokeStyle = '#0d9488';
-        ctx.lineWidth = 2.5;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-
-        // Top-Left
-        ctx.beginPath();
-        ctx.moveTo(fbX, fbY + cornerLen);
-        ctx.lineTo(fbX, fbY);
-        ctx.lineTo(fbX + cornerLen, fbY);
-        ctx.stroke();
-
-        // Top-Right
-        ctx.beginPath();
-        ctx.moveTo(fbX + fbW - cornerLen, fbY);
-        ctx.lineTo(fbX + fbW, fbY);
-        ctx.lineTo(fbX + fbW, fbY + cornerLen);
-        ctx.stroke();
-
-        // Bottom-Left
-        ctx.beginPath();
-        ctx.moveTo(fbX, fbY + fbH - cornerLen);
-        ctx.lineTo(fbX, fbY + fbH);
-        ctx.lineTo(fbX + cornerLen, fbY + fbH);
-        ctx.stroke();
-
-        // Bottom-Right
-        ctx.beginPath();
-        ctx.moveTo(fbX + fbW - cornerLen, fbY + fbH);
-        ctx.lineTo(fbX + fbW, fbY + fbH);
-        ctx.lineTo(fbX + fbW, fbY + fbH - cornerLen);
-        ctx.stroke();
-
-        // Natural Cranial Reference Landmarks: Glabella (#10) & Zygomas (#234 / #454)
-        if (tracking.landmarks[10]) {
-          const gX = tracking.landmarks[10].x * w;
-          const gY = tracking.landmarks[10].y * h;
-          ctx.strokeStyle = '#06b6d4';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.arc(gX, gY, 5, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.fillStyle = '#06b6d4';
-          ctx.beginPath();
-          ctx.arc(gX, gY, 2, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.font = 'bold 9px monospace';
-          ctx.fillStyle = '#67e8f9';
-          ctx.fillText('Glabella (#10)', gX + 8, gY + 3);
-        }
-
-        if (tracking.landmarks[234]) {
-          const zX = tracking.landmarks[234].x * w;
-          const zY = tracking.landmarks[234].y * h;
-          ctx.strokeStyle = '#06b6d4';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.arc(zX, zY, 4.5, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.font = 'bold 9px monospace';
-          ctx.fillStyle = '#67e8f9';
-          ctx.fillText('R-Zygoma (#234)', zX - 88, zY + 3);
-        }
-
-        if (tracking.landmarks[454]) {
-          const zX = tracking.landmarks[454].x * w;
-          const zY = tracking.landmarks[454].y * h;
-          ctx.strokeStyle = '#06b6d4';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.arc(zX, zY, 4.5, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.font = 'bold 9px monospace';
-          ctx.fillStyle = '#67e8f9';
-          ctx.fillText('L-Zygoma (#454)', zX + 8, zY + 3);
-        }
-
-        // Interpupillary Line & Roll Angle
-        if (tracking.landmarks[33] && tracking.landmarks[263]) {
-          const rx = tracking.landmarks[33].x * w;
-          const ry = tracking.landmarks[33].y * h;
-          const lx = tracking.landmarks[263].x * w;
-          const ly = tracking.landmarks[263].y * h;
-
-          ctx.strokeStyle = 'rgba(20, 184, 166, 0.65)';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(rx, ry);
-          ctx.lineTo(lx, ly);
-          ctx.stroke();
-
-          ctx.fillStyle = '#2dd4bf';
-          ctx.beginPath();
-          ctx.arc(rx, ry, 2.5, 0, Math.PI * 2);
-          ctx.arc(lx, ly, 2.5, 0, Math.PI * 2);
-          ctx.fill();
-
-          const midX = (rx + lx) / 2;
-          const midY = (ry + ly) / 2;
-          ctx.font = 'bold 9px monospace';
-          ctx.fillStyle = '#2dd4bf';
-          ctx.fillText(`Interpupillary: ${Math.abs(tracking.rollDeg).toFixed(1)}°`, midX - 45, midY - 6);
-        }
-
-        // Facial Midline (Glabella -> Menton)
-        if (tracking.landmarks[10] && tracking.landmarks[152]) {
-          const gX = tracking.landmarks[10].x * w;
-          const gY = tracking.landmarks[10].y * h;
-          const mX = tracking.landmarks[152].x * w;
-          const mY = tracking.landmarks[152].y * h;
-
-          ctx.strokeStyle = 'rgba(13, 148, 136, 0.5)';
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([4, 4]);
-          ctx.beginPath();
-          ctx.moveTo(gX, gY);
-          ctx.lineTo(mX, mY);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-
-        // Subnasale (Sn) & Menton (Me) Vertical VDO Caliper Bracket
-        const snPt = tracking.landmarks[1] || tracking.landmarks[2];
-        const mePt = tracking.landmarks[152];
-        if (snPt && mePt) {
-          const snX = snPt.x * w;
-          const snY = snPt.y * h;
-          const meX = mePt.x * w;
-          const meY = mePt.y * h;
-          const bracketX = Math.max(snX, meX) + Math.min(w * 0.16, 60);
-
-          ctx.strokeStyle = '#f59e0b';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(snX + 6, snY);
-          ctx.lineTo(bracketX, snY);
-          ctx.lineTo(bracketX, meY);
-          ctx.lineTo(meX + 6, meY);
-          ctx.stroke();
-
-          ctx.fillStyle = '#f59e0b';
-          ctx.beginPath();
-          ctx.arc(bracketX, snY, 2.5, 0, Math.PI * 2);
-          ctx.arc(bracketX, meY, 2.5, 0, Math.PI * 2);
-          ctx.fill();
-
-          const activeVdo = mode === 'SIMULATION' ? simVdo : (tracking.softwareSelfCorrection?.invariantVdoMm || simVdo);
-          ctx.font = 'bold 10px monospace';
-          ctx.fillStyle = '#fbbf24';
-          ctx.fillText(`VDO: ${activeVdo.toFixed(1)} mm`, bracketX + 6, (snY + meY) / 2 + 3);
-        }
-
-        // =========================================================================
-        // ARUCO FIDUCIAL MARKERS: WEBCAM ALIGNMENT HINTS & SIMULATION BOARD DRAW
-        // (Note: Real WEBCAM marker green overlays are drawn in section 2b above even if face is absent)
-        // =========================================================================
-        if (mode === 'WEBCAM') {
-          if (liveMarkersRef.current.length === 0) {
-            // When physical markers not yet in frame: Show helpful oral corridor alignment zones
-            const oralX = fbX + fbW * 0.72;
-            const oralY = fbY + fbH * 0.60;
-            const zoneSize = Math.min(fbW * 0.22, 50);
-
-            ctx.strokeStyle = 'rgba(20, 184, 166, 0.4)';
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([3, 3]);
-            ctx.strokeRect(oralX, oralY, zoneSize, zoneSize);
-            ctx.strokeRect(oralX, oralY + zoneSize + 8, zoneSize, zoneSize);
-            ctx.setLineDash([]);
-
-            ctx.font = 'bold 8px monospace';
-            ctx.fillStyle = 'rgba(45, 212, 191, 0.7)';
-            ctx.fillText('Maxilla (3-6)', oralX, oralY - 4);
-            ctx.fillText('Mandible (7-10)', oralX, oralY + zoneSize + 6);
-          }
-        } else {
-          // In SIMULATION Mode: Draw the dual 18x18mm ArUco carrier boards with ArUco bit patterns
-          const oralX = fbX + fbW * 0.74;
-          const oralMaxY = fbY + fbH * 0.58;
-          const boardW = Math.max(38, Math.min(fbW * 0.24, 60));
-          const boardH = boardW * 0.85;
-          const vdoOffset = (simVdo - 50) * 0.6;
-          const oralMandY = oralMaxY + boardH + Math.max(6, vdoOffset);
-
-          // Maxillary 18x18mm Board [IDs 3, 4, 5, 6]
-          ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-          ctx.fillRect(oralX, oralMaxY, boardW, boardH);
-          ctx.strokeStyle = '#06b6d4'; // Cyan
-          ctx.lineWidth = 2;
-          ctx.strokeRect(oralX, oralMaxY, boardW, boardH);
-
-          // 4 simulated ArUco cells on Maxilla board
-          const cellW = (boardW - 8) / 2;
-          const cellH = (boardH - 8) / 2;
-          const maxIds = [3, 4, 5, 6];
-          for (let row = 0; row < 2; row++) {
-            for (let col = 0; col < 2; col++) {
-              const cx = oralX + 4 + col * cellW;
-              const cy = oralMaxY + 4 + row * cellH;
-              ctx.fillStyle = '#0f172a';
-              ctx.fillRect(cx, cy, cellW - 2, cellH - 2);
-              ctx.strokeStyle = '#22c55e';
-              ctx.lineWidth = 1;
-              ctx.strokeRect(cx, cy, cellW - 2, cellH - 2);
-              ctx.fillStyle = '#ffffff';
-              ctx.fillRect(cx + 2, cy + 2, cellW - 6, cellH - 6);
-              ctx.fillStyle = '#0f172a';
-              ctx.fillRect(cx + 4, cy + 4, cellW - 10, cellH - 10);
-            }
-          }
-
-          ctx.font = 'bold 8px monospace';
-          ctx.fillStyle = '#67e8f9';
-          ctx.fillText('Maxilla (3-6)', oralX, oralMaxY - 4);
-
-          // Mandibular 18x18mm Board [IDs 7, 8, 9, 10]
-          ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-          ctx.fillRect(oralX, oralMandY, boardW, boardH);
-          ctx.strokeStyle = '#06b6d4';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(oralX, oralMandY, boardW, boardH);
-
-          for (let row = 0; row < 2; row++) {
-            for (let col = 0; col < 2; col++) {
-              const cx = oralX + 4 + col * cellW;
-              const cy = oralMandY + 4 + row * cellH;
-              ctx.fillStyle = '#0f172a';
-              ctx.fillRect(cx, cy, cellW - 2, cellH - 2);
-              ctx.strokeStyle = '#22c55e';
-              ctx.lineWidth = 1;
-              ctx.strokeRect(cx, cy, cellW - 2, cellH - 2);
-              ctx.fillStyle = '#ffffff';
-              ctx.fillRect(cx + 2, cy + 2, cellW - 6, cellH - 6);
-              ctx.fillStyle = '#0f172a';
-              ctx.fillRect(cx + 4, cy + 4, cellW - 10, cellH - 10);
-            }
-          }
-
-          ctx.font = 'bold 8px monospace';
-          ctx.fillStyle = '#67e8f9';
-          ctx.fillText('Mandible (7-10)', oralX, oralMandY + boardH + 10);
-
-          // Caliper arrow between the two boards
-          ctx.strokeStyle = '#22c55e';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(oralX + boardW + 6, oralMaxY + boardH);
-          ctx.lineTo(oralX + boardW + 6, oralMandY);
-          ctx.stroke();
-
-          ctx.fillStyle = '#4ade80';
-          ctx.beginPath();
-          ctx.arc(oralX + boardW + 6, oralMaxY + boardH, 2, 0, Math.PI * 2);
-          ctx.arc(oralX + boardW + 6, oralMandY, 2, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.font = 'bold 9px monospace';
-          ctx.fillStyle = '#4ade80';
-          ctx.fillText(`Δ ${simVdo.toFixed(1)}mm`, oralX + boardW + 10, (oralMaxY + boardH + oralMandY) / 2 + 3);
-        }
-
-        // Draw MediaPipe Skeletal mesh in Developer Mode
-        if (developerMode) {
-          ctx.strokeStyle = 'rgba(56, 189, 248, 0.25)';
-          ctx.lineWidth = 1;
-          for (let i = 0; i < Math.min(tracking.landmarks.length, 60); i += 2) {
-            const pt = tracking.landmarks[i];
-            if (pt) {
-              ctx.beginPath();
-              ctx.arc(pt.x * w, pt.y * h, 1.5, 0, Math.PI * 2);
-              ctx.fillStyle = '#38bdf8';
-              ctx.fill();
-            }
-          }
-        }
-      } else if (mode === 'SIMULATION' || !isMarkerTestMode) {
-        // Clean Centered Framing Guide when searching (hidden in Marker Test Mode to keep single/card targets uncluttered)
-        const cx = w / 2;
-        const cy = h / 2 - 10;
-        const ow = Math.min(w * 0.45, 120);
-        const oh = ow * 1.35;
-
-        ctx.strokeStyle = 'rgba(203, 213, 225, 0.3)';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 6]);
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, ow, oh, 0, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        ctx.font = 'bold 11px system-ui, sans-serif';
-        ctx.fillStyle = 'rgba(203, 213, 225, 0.7)';
-        ctx.textAlign = 'center';
-        ctx.fillText(
-          mode === 'WEBCAM' ? 'Show Printed DICT_4X4_50 Markers or Face' : 'Position Patient Face in Frame (35–50 cm)',
-          cx,
-          cy + oh + 22
+      // 4. Face Landmarks: AUTO (MediaPipe FaceLandmarker) vs MANUAL (9-point interactive placement)
+      if (faceMode === 'MANUAL') {
+        drawManualFaceLandmarksOnCanvas(
+          ctx,
+          frozenFrameCanvasRef.current || videoRef.current,
+          manualPoints,
+          activeDragKey,
+          hoverNormPt,
+          w,
+          h
         );
-        ctx.textAlign = 'start';
+      } else if (mode === 'WEBCAM' && isWebcamReady && videoRef.current && coverTransform) {
+        if (frameCount % 2 === 0) {
+          const mpOut = mpControllerRef.current.detectVideoFrame(videoRef.current, time);
+          setFaceInferenceTimeMs(mpOut.inferenceTimeMs);
+
+          if (mpOut.detected) {
+            autoLandmarksRef.current = mpOut.landmarks;
+            lastValidAutoLandmarksRef.current = mpOut.landmarks;
+            lastAutoSuccessTimeRef.current = time;
+            setAutoFaceDetected(true);
+            setAutoFaceRollDeg(mpOut.rollDeg);
+            setAutoFailedFor3Sec(false);
+            setHasAutoLandmarksAvailable(true);
+          } else {
+            autoLandmarksRef.current = [];
+            setAutoFaceDetected(false);
+            if (time - lastAutoSuccessTimeRef.current >= 3000) {
+              setAutoFailedFor3Sec(true);
+            }
+          }
+        }
+
+        if (autoLandmarksRef.current.length >= 468) {
+          drawAutoFaceLandmarksOnCanvas(
+            ctx,
+            autoLandmarksRef.current,
+            videoRef.current.videoWidth || 640,
+            videoRef.current.videoHeight || 480,
+            coverTransform
+          );
+        }
       }
 
       animationFrameId = requestAnimationFrame(render);
@@ -919,95 +764,71 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
 
     animationFrameId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [mode, isMarkerTestMode, cameraFacing, simVdo, simTiltML, simTiltAP, simMidline, simDistance, simIlluminationIRE, calibrationSettings, developerMode]);
+  }, [
+    mode,
+    faceMode,
+    hasFrozenFrame,
+    manualPoints,
+    activeDragKey,
+    hoverNormPt,
+    cameraFacing,
+    calibrationSettings,
+  ]);
 
-  // Primary Shutter Action: Capture jaw relation trial
+  // Primary Shutter Action
   const handleTriggerShutter = () => {
     if (!opticalDiagnostic.engineeringTestAllowed) return;
-
-    // Trigger flash animation
     setShutterTriggered(true);
     setTimeout(() => setShutterTriggered(false), 300);
-
-    // Record CR trial
     onRecordCrTrial();
-
-    // Feedback toast
     const nextTrial = trialCount + 1;
     setTrialCount(nextTrial);
-    setTrialToast(`Trial ${trialCount} recorded successfully`);
+    setTrialToast(`Trial ${trialCount} recorded`);
     setTimeout(() => setTrialToast(null), 2500);
   };
 
-  // Single dynamic status indicator logic
-  const getStatusBadge = () => {
-    if (mode === 'WEBCAM' && !cameraActive) {
-      return {
-        label: cameraPermissionError ? 'Camera Denied' : 'Starting Camera...',
-        color: 'bg-rose-500/10 text-rose-300 border-rose-500/30',
-        dot: 'bg-rose-500',
-      };
-    }
-    if (opticalDiagnostic.state === 'READY_FOR_ENGINEERING_TEST') {
-      return {
-        label: 'Ready to Capture',
-        color: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30',
-        dot: 'bg-emerald-400',
-      };
-    }
-    if (!trackingData?.detected) {
-      return {
-        label: mode === 'WEBCAM' && hasAnyOpticalMarkers ? 'Markers Detected · Align Face' : 'Aligning Patient Face',
-        color: 'bg-amber-500/10 text-amber-300 border-amber-500/30',
-        dot: 'bg-amber-400',
-      };
-    }
-    return {
-      label: 'Hold Phone Steady',
-      color: 'bg-teal-500/10 text-teal-300 border-teal-500/30',
-      dot: 'bg-teal-400',
-    };
+  const cand = frameDiag?.candidateSummary ?? {
+    quads: 0,
+    rejectedTooSmall: 0,
+    rejectedBorder: 0,
+    rejectedDictionary: 0,
+    rejectedFlat: 0,
   };
 
-  // Single dynamic instruction logic
-  const getInstructionText = () => {
-    if (mode === 'WEBCAM' && !cameraActive) {
-      return cameraPermissionError 
-        ? 'Please allow camera permission in browser settings.'
-        : 'Connecting to device camera...';
-    }
-    if (!trackingData?.detected) {
-      return 'Position the patient’s face inside the camera view.';
-    }
-    if (opticalDiagnostic.state !== 'READY_FOR_ENGINEERING_TEST') {
-      return opticalDiagnostic.actionableGuidance || 'Align patient in view.';
-    }
-    return 'Hold steady and tap the shutter to record.';
-  };
-
-  const status = getStatusBadge();
-  const instruction = getInstructionText();
+  const canvasAspect =
+    canvasRef.current && canvasRef.current.height > 0
+      ? canvasRef.current.width / canvasRef.current.height
+      : 16 / 9;
 
   return (
-    <div className="relative w-full h-[calc(100dvh-57px-64px)] md:h-[calc(100dvh-65px)] bg-slate-950 flex flex-col overflow-hidden select-none">
-      {/* Hidden video element for camera stream */}
+    <div className="relative w-full h-[calc(100dvh-56px)] bg-slate-950 flex flex-col overflow-hidden select-none">
+      {/* Hidden video element for live camera stream */}
       <video ref={videoRef} className="hidden" autoPlay playsInline muted />
 
-      {/* Main Viewfinder Stage (Dynamic Canvas) */}
-      <div ref={containerRef} className="relative flex-1 w-full h-full overflow-hidden flex items-center justify-center">
-        <canvas 
-          ref={canvasRef} 
-          className="w-full h-full object-cover" 
+      {/* Main Viewfinder Stage */}
+      <div
+        ref={containerRef}
+        className="relative flex-1 w-full h-full overflow-hidden flex items-center justify-center"
+      >
+        <canvas
+          ref={canvasRef}
+          onPointerDown={handleCanvasPointerDown}
+          onPointerMove={handleCanvasPointerMove}
+          onPointerUp={handleCanvasPointerUp}
+          onPointerLeave={() => setHoverNormPt(null)}
+          className={`w-full h-full object-cover ${
+            faceMode === 'MANUAL' ? 'cursor-crosshair touch-none' : ''
+          }`}
         />
 
-        {/* Shutter Flash Animation */}
+        {/* Shutter Flash */}
         {shutterTriggered && (
           <div className="absolute inset-0 bg-white/70 pointer-events-none z-30 animate-shutter-flash" />
         )}
 
-        {/* Success Feedback Toast */}
+        {/* Toast */}
         {trialToast && (
-          <div className="absolute top-4 inset-x-0 flex justify-center pointer-events-none z-30">
+          <div className="absolute top-16 inset-x-0 flex justify-center pointer-events-none z-30">
             <div className="px-4 py-2 bg-emerald-600 text-white font-bold text-xs rounded-full shadow-lg flex items-center gap-2">
               <Check className="w-4 h-4" />
               <span>{trialToast}</span>
@@ -1015,771 +836,352 @@ export const LiveScanner: React.FC<LiveScannerProps> = ({
           </div>
         )}
 
-        {/* Simulation Truthful Watermark (Unmistakable & Centered) */}
-        {mode === 'SIMULATION' && (
-          <div className="absolute top-3 inset-x-0 flex justify-center pointer-events-none z-20 px-3">
-            <div className="px-3 py-1 bg-amber-500/90 text-slate-950 text-[11px] font-bold tracking-wider uppercase rounded-full shadow-md flex items-center gap-1.5">
-              <AlertCircle className="w-3.5 h-3.5" />
-              <span>SIMULATION — NOT A MEASUREMENT</span>
+        {/* Top Bar: Camera Controls + Self-Check + Settings/Calibration + Help + Advanced */}
+        <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-2 pointer-events-auto z-20 flex-wrap">
+          {/* Left: Camera Stream Controls & Active Resolution */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {mode === 'WEBCAM' && (
+              <>
+                <button
+                  onClick={() => setCameraPoweredOn((prev) => !prev)}
+                  className={`min-h-[36px] px-3 py-1.5 rounded-xl border backdrop-blur-md transition-colors flex items-center gap-1.5 cursor-pointer text-xs font-bold ${
+                    cameraPoweredOn
+                      ? 'bg-slate-900/90 border-slate-700 text-emerald-300 hover:bg-slate-800'
+                      : 'bg-rose-950/90 border-rose-700 text-rose-200 hover:bg-rose-900'
+                  }`}
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>{cameraPoweredOn ? 'Cam ON' : 'Cam OFF'}</span>
+                </button>
+
+                <button
+                  onClick={() => setCameraFacing((prev) => (prev === 'user' ? 'environment' : 'user'))}
+                  className="min-h-[36px] px-2.5 py-1.5 rounded-xl bg-slate-900/90 backdrop-blur-md border border-slate-700 text-slate-200 hover:text-white transition-colors flex items-center gap-1 text-xs font-semibold cursor-pointer"
+                  title="Switch Front / Rear Camera"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">{cameraFacing === 'user' ? 'Front' : 'Rear'}</span>
+                </button>
+
+                {videoDevices.length > 1 && (
+                  <select
+                    value={selectedDeviceId}
+                    onChange={(e) => setSelectedDeviceId(e.target.value)}
+                    className="h-9 px-2 py-1 bg-slate-900/90 text-slate-200 border border-slate-700 text-xs rounded-xl cursor-pointer max-w-[140px] truncate"
+                  >
+                    <option value="">Default Camera</option>
+                    {videoDevices.map((d, i) => (
+                      <option key={d.deviceId || i} value={d.deviceId}>
+                        {d.label || `Camera ${i + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                {faceMode === 'MANUAL' && (
+                  <button
+                    onClick={captureFrozenFrame}
+                    className="min-h-[36px] px-2.5 py-1.5 rounded-xl bg-cyan-950/90 border border-cyan-600/60 text-cyan-200 hover:bg-cyan-900 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                    title="Freeze a fresh video frame for manual landmarks"
+                  >
+                    <Snowflake className="w-3.5 h-3.5" />
+                    <span>Refreeze Frame</span>
+                  </button>
+                )}
+              </>
+            )}
+
+            {actualResolution && mode === 'WEBCAM' && (
+              <div
+                className={`px-2.5 py-1 rounded-xl border text-[11px] font-mono ${
+                  isLowCameraResolution
+                    ? 'bg-amber-950/90 border-amber-500/60 text-amber-300 font-bold'
+                    : 'bg-slate-900/90 border-slate-800 text-slate-300'
+                }`}
+              >
+                {actualResolution.width}×{actualResolution.height}
+                {autofocusStatus === 'CONTINUOUS' ? ' · AF-C' : ''}
+                {isLowCameraResolution ? ' · WARN <1280×720' : ''}
+              </div>
+            )}
+
+            {mode === 'SIMULATION' && (
+              <div className="px-3 py-1 bg-amber-500/90 text-slate-950 text-xs font-bold rounded-xl flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5" />
+                <span>SIMULATION MODE</span>
+                <button
+                  onClick={() => setMode('WEBCAM')}
+                  className="ml-1 px-2 py-0.5 bg-slate-950 text-white rounded text-[10px] cursor-pointer"
+                >
+                  Switch to Live Camera
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Right: Self-Check + Single Calibration/Settings Entry + Help Link + Advanced */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setIsSelfCheckOpen(true)}
+              className="min-h-[36px] px-3 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-600 text-white text-xs font-bold shadow-md transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span>Self-Check</span>
+            </button>
+
+            <button
+              onClick={onOpenCalibration}
+              className="min-h-[36px] px-3 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="Camera Calibration & Optical Intrinsics"
+            >
+              <Settings2 className="w-3.5 h-3.5 text-teal-400" />
+              <span className="hidden sm:inline">Calibration</span>
+            </button>
+
+            {onOpenManual && (
+              <button
+                onClick={onOpenManual}
+                className="min-h-[36px] px-2.5 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                title="Help & Clinical Documentation"
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="hidden sm:inline">Help</span>
+              </button>
+            )}
+
+            <div className="relative">
+              <button
+                onClick={() => setIsAdvancedOpen((v) => !v)}
+                className="min-h-[36px] px-2.5 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                title="Advanced Options"
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Advanced</span>
+              </button>
+
+              {isAdvancedOpen && (
+                <div className="absolute right-0 mt-2 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-3 z-40 space-y-2.5 text-xs">
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                    Advanced Options
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setMode((m) => (m === 'WEBCAM' ? 'SIMULATION' : 'WEBCAM'));
+                      setIsAdvancedOpen(false);
+                    }}
+                    className="w-full py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-left text-slate-200 font-semibold flex items-center justify-between cursor-pointer"
+                  >
+                    <span>Mode: {mode === 'WEBCAM' ? 'Live Camera' : 'Simulation'}</span>
+                    <Play className="w-3.5 h-3.5 text-teal-400" />
+                  </button>
+
+                  {onOpenMarkers && (
+                    <button
+                      onClick={() => {
+                        onOpenMarkers();
+                        setIsAdvancedOpen(false);
+                      }}
+                      className="w-full py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-left text-slate-200 font-semibold flex items-center justify-between cursor-pointer"
+                    >
+                      <span>Print A4 Marker Sheet</span>
+                      <Printer className="w-3.5 h-3.5 text-cyan-400" />
+                    </button>
+                  )}
+
+                  {mode === 'SIMULATION' && (
+                    <div className="space-y-2 pt-2 border-t border-slate-800 font-mono text-[11px]">
+                      <div>
+                        <div className="flex justify-between text-slate-400">
+                          <span>Sim VDO:</span>
+                          <span className="text-white">{simVdo.toFixed(1)} mm</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="50"
+                          max="75"
+                          step="0.5"
+                          value={simVdo}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setSimVdo(val);
+                            onUpdateVdo(val);
+                          }}
+                          className="w-full accent-teal-500"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-slate-400">
+                          <span>Sim Tilt M-L:</span>
+                          <span className="text-white">{simTiltML.toFixed(1)}°</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-8"
+                          max="8"
+                          step="0.2"
+                          value={simTiltML}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setSimTiltML(val);
+                            onUpdateTiltML(val);
+                          }}
+                          className="w-full accent-teal-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
-        )}
+        </div>
 
-        {/* Live Camera Paused or Error Overlay */}
-        {mode === 'WEBCAM' && (!cameraPoweredOn || cameraPermissionError) && (
-          <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-25">
-            <div className={`p-4 rounded-2xl border mb-3 ${
-              cameraPermissionError ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-slate-900 border-slate-800 text-teal-400'
-            }`}>
+        {/* Camera Paused / Permission Denied Overlay (only when in AUTO mode without frozen frame) */}
+        {mode === 'WEBCAM' && faceMode === 'AUTO' && (!cameraPoweredOn || cameraPermissionError) && (
+          <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-15">
+            <div className="p-4 rounded-2xl border mb-3 bg-slate-900 border-slate-800 text-teal-400">
               <Camera className="w-8 h-8" />
             </div>
             <h3 className="text-base font-bold text-white mb-1">
               {cameraPermissionError ? 'Camera Access Required' : 'Camera Feed Paused'}
             </h3>
-            <p className="text-xs text-slate-400 max-w-sm mb-4 leading-relaxed">
-              {cameraPermissionError
-                ? cameraPermissionError
-                : 'The camera video stream has been paused to conserve device power and camera hardware resources.'}
+            <p className="text-xs text-slate-400 max-w-sm mb-4">
+              {cameraPermissionError || 'Start the camera feed or switch to Manual landmark mode.'}
             </p>
             <div className="flex items-center gap-2">
-              {cameraPermissionError ? (
-                <button
-                  onClick={() => {
-                    setCameraPermissionError(null);
-                    setRetryTrigger(r => r + 1);
-                  }}
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-2"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Retry Camera Permission</span>
-                </button>
-              ) : (
-                <button
-                  onClick={() => setCameraPoweredOn(true)}
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-2"
-                >
-                  <Camera className="w-3.5 h-3.5" />
-                  <span>Start Camera Feed</span>
-                </button>
-              )}
+              <button
+                onClick={() => {
+                  setCameraPermissionError(null);
+                  setCameraPoweredOn(true);
+                  setRetryTrigger((r) => r + 1);
+                }}
+                className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                {cameraPermissionError ? 'Retry Camera Permission' : 'Start Camera Feed'}
+              </button>
+              <button
+                onClick={() => handleSwitchFaceMode('MANUAL')}
+                className="px-4 py-2 bg-cyan-700 hover:bg-cyan-600 text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Place landmarks manually
+              </button>
             </div>
           </div>
         )}
 
-        {/* Top Minimal Viewfinder Header (Controls & Mode Switcher) */}
-        <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-2 pointer-events-auto z-20 flex-wrap">
-          {/* Mode Switcher: Simulate | Live Camera | Marker Test */}
-          <div className="flex items-center gap-1 bg-slate-900/85 backdrop-blur-md p-1 rounded-xl border border-slate-800">
-            <button
-              onClick={() => {
-                setMode('SIMULATION');
-                setIsMarkerTestMode(false);
-              }}
-              className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                mode === 'SIMULATION' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Simulate
-            </button>
-            <button
-              onClick={() => {
-                setMode('WEBCAM');
-                setIsMarkerTestMode(false);
-                setCameraPoweredOn(true);
-              }}
-              className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                mode === 'WEBCAM' && !isMarkerTestMode ? 'bg-teal-700 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Live Camera
-            </button>
-            <button
-              onClick={() => {
-                setMode('WEBCAM');
-                setIsMarkerTestMode(true);
-                setCameraPoweredOn(true);
-              }}
-              className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
-                mode === 'WEBCAM' && isMarkerTestMode ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Dedicated Step-by-Step Live ArUco Marker Test Mode"
-            >
-              <Target className="w-3.5 h-3.5" />
-              <span>Marker Test</span>
-            </button>
-          </div>
+        {/* Bottom HUD: 1. FaceLandmarkPanel (AUTO/MANUAL) + 2. Marker Panel (Maxillary/Mandibular) + 3. Capture */}
+        <div className="absolute bottom-3 left-3 right-3 flex flex-col gap-2 pointer-events-auto z-20 max-w-4xl mx-auto">
+          {/* 1. Face Status + AUTO/MANUAL Switch Panel */}
+          <FaceLandmarkPanel
+            faceMode={faceMode}
+            onChangeFaceMode={handleSwitchFaceMode}
+            modelState={mpModelState}
+            onRetryModelLoad={() => mpControllerRef.current.initialize()}
+            autoDetected={autoFaceDetected}
+            autoRollDeg={autoFaceRollDeg}
+            autoFailedFor3Sec={autoFailedFor3Sec}
+            hasAutoLandmarksAvailable={hasAutoLandmarksAvailable}
+            manualPoints={manualPoints}
+            onUndoManualPoint={handleUndoManualPoint}
+            onResetManualPoints={handleResetManualPoints}
+            onCopyAutoPointsToManual={handleCopyAutoPointsToManual}
+            canvasAspectRatio={canvasAspect}
+          />
 
-          {/* Quick Actions (Camera Start/Stop, Camera Selection, Markers Inspector, Flip Camera, Settings/Developer) */}
-          <div className="flex items-center gap-1.5 flex-wrap justify-end">
-            {mode === 'WEBCAM' && (
-              <button
-                onClick={() => setCameraPoweredOn(prev => !prev)}
-                className={`min-h-[36px] px-2.5 py-1.5 rounded-xl border backdrop-blur-md transition-colors flex items-center gap-1.5 cursor-pointer text-xs font-semibold ${
-                  cameraPoweredOn
-                    ? 'bg-rose-950/80 border-rose-800 text-rose-300 hover:bg-rose-900'
-                    : 'bg-emerald-950/80 border-emerald-800 text-emerald-300 hover:bg-emerald-900'
-                }`}
-                title={cameraPoweredOn ? 'Stop Camera Video Stream' : 'Start Camera Video Stream'}
-              >
-                <Camera className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">{cameraPoweredOn ? 'Stop Cam' : 'Start Cam'}</span>
-              </button>
-            )}
-
-            {mode === 'WEBCAM' && videoDevices.length > 1 && (
-              <select
-                value={selectedDeviceId}
-                onChange={(e) => setSelectedDeviceId(e.target.value)}
-                className="h-9 px-2 py-1 bg-slate-900/90 text-slate-200 border border-slate-700 text-xs rounded-xl cursor-pointer max-w-[130px] truncate"
-                title="Select Camera Device"
-              >
-                <option value="">Default Camera</option>
-                {videoDevices.map((d, i) => (
-                  <option key={d.deviceId || i} value={d.deviceId}>
-                    {d.label || `Camera ${i + 1}`}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            <button
-              onClick={() => setIsMarkerInspectorOpen(true)}
-              className={`min-h-[36px] px-3 py-1.5 rounded-xl backdrop-blur-md border transition-colors flex items-center gap-1.5 cursor-pointer text-xs font-semibold ${
-                mode === 'WEBCAM' && liveMarkers.length > 0
-                  ? 'bg-emerald-950/90 border-emerald-500/60 text-emerald-300 hover:text-white'
-                  : 'bg-slate-900/85 border-slate-800 text-teal-300 hover:text-white'
-              }`}
-              title="Open ArUco Detection Diagnostics & Telemetry"
-            >
-              <Activity className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">
-                {mode === 'WEBCAM' ? `Diagnostics (${liveMarkers.length})` : 'Marker Telemetry'}
-              </span>
-            </button>
-
-            {mode === 'WEBCAM' && (
-              <button
-                onClick={() => setCameraFacing(prev => prev === 'user' ? 'environment' : 'user')}
-                className="min-h-[36px] min-w-[36px] p-2 rounded-xl bg-slate-900/85 backdrop-blur-md border border-slate-800 text-slate-300 hover:text-white transition-colors flex items-center justify-center cursor-pointer"
-                title="Switch Front / Rear Camera"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
-            )}
-
-            {developerMode && (
-              <button
-                onClick={() => setIsDevDrawerOpen(true)}
-                className="min-h-[36px] min-w-[36px] p-2 rounded-xl bg-slate-900/85 backdrop-blur-md border border-slate-800 text-teal-400 hover:text-teal-300 transition-colors flex items-center justify-center cursor-pointer"
-                title="Open Developer Diagnostics"
-              >
-                <Sliders className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Real-time Truthful ArUco & Clinical Target Acquisition Strip (Phase 5 Structured Indicators) */}
-        <div className="absolute top-16 left-3 right-3 flex items-center justify-center pointer-events-none z-20">
-          <div className="flex flex-col items-center gap-1 bg-slate-950/92 backdrop-blur-md px-3 py-2 rounded-xl border border-slate-800 text-[11px] font-mono shadow-lg max-w-full">
-            {mode === 'WEBCAM' ? (
-              <>
-                <div className="flex items-center gap-1.5 flex-wrap justify-center">
-                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
-                    <span className={`w-2 h-2 rounded-full ${faceTrackingDetected ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                    <span className="text-slate-400">FACE TRACKING:</span>
-                    <span className={faceTrackingDetected ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
-                      {faceTrackingDetected ? 'DETECTED' : 'NOT DETECTED'}
-                    </span>
-                  </div>
-
-                  {actualResolution && (
-                    <div
-                      className={`flex items-center gap-1 px-2 py-0.5 rounded border ${
-                        isLowCameraResolution
-                          ? 'bg-amber-950/80 border-amber-500/60 text-amber-300'
-                          : 'bg-slate-900 border-slate-800 text-slate-300'
-                      }`}
-                    >
-                      <span>RES: {actualResolution.width}×{actualResolution.height}</span>
-                      {autofocusStatus === 'CONTINUOUS' && <span className="text-teal-400">· AF-C</span>}
-                      {isLowCameraResolution && (
-                        <span className="text-amber-300 font-bold">· WARN &lt;1280×720</span>
-                      )}
-                    </div>
-                  )}
-
-                  {frameDiag && (
-                    <div className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400">
-                      <span>PROC: {frameDiag.procWidth}×{frameDiag.procHeight} ({frameDiag.processingTimeMs.toFixed(1)} ms)</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Phase 5 Explicit Maxillary & Mandibular Group Readouts */}
-                <div className="flex items-center gap-1.5 flex-wrap justify-center text-[10px]">
-                  <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-cyan-950/50 border border-cyan-500/40 text-cyan-200">
-                    <span className="font-bold text-cyan-400">MAXILLARY</span>
-                    <span>Detected IDs: [{maxillaDetectedIds.join(', ')}]</span>
-                    <span>· Count: {maxillaDetectedCount}/4</span>
-                    <span>· Missing: [{maxillaMissingIds.join(', ')}]</span>
-                  </div>
-
-                  <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-950/50 border border-amber-500/40 text-amber-200">
-                    <span className="font-bold text-amber-400">MANDIBULAR</span>
-                    <span>Detected IDs: [{mandibleDetectedIds.join(', ')}]</span>
-                    <span>· Count: {mandibleDetectedCount}/4</span>
-                    <span>· Missing: [{mandibleMissingIds.join(', ')}]</span>
-                  </div>
-                </div>
-
-                {/* Candidate counts when 0 markers detected, or quality warning notice */}
-                {liveMarkers.length === 0 && frameDiag?.candidateSummary && (
-                  <div className="text-[10px] text-slate-400">
-                    STATUS: <span className="text-amber-300 font-bold">{arucoPipelineDiag.arucoStatusLabel}</span> · Quads: {frameDiag.candidateSummary.quads} · TooSmall: {frameDiag.candidateSummary.rejectedTooSmall} · Border: {frameDiag.candidateSummary.rejectedBorder} · Dict: {frameDiag.candidateSummary.rejectedDictionary} · Flat: {frameDiag.candidateSummary.rejectedFlat}
-                  </div>
-                )}
-
-                {arucoPipelineDiag.qualityWarnings.length > 0 && (
-                  <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-950/70 border border-amber-600/50 text-amber-300 text-[10px]">
-                    <span>WARN: {arucoPipelineDiag.qualityWarnings[0]}</span>
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
-                  <span className={`w-2 h-2 rounded-full ${trackingData?.detected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
-                  <span className="text-slate-300">Face (Sim):</span>
-                  <span className={trackingData?.detected ? 'text-emerald-400 font-bold' : 'text-amber-400'}>
-                    {trackingData?.detected ? 'SIMULATED' : 'ALIGNING'}
+          {/* 2. Dental-Rim ArUco Marker Panel (Maxillary 3-6 Cyan, Mandibular 7-10 Amber, Factual Status) */}
+          <div className="bg-slate-950/92 backdrop-blur-md border border-slate-800 rounded-xl p-2.5 text-xs font-mono shadow-lg space-y-1.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* Maxillary Group (IDs 3, 4, 5, 6) */}
+              <div className="px-2.5 py-1.5 rounded-lg bg-cyan-950/40 border border-cyan-500/40 text-cyan-100 flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-bold text-cyan-400 block">MAXILLARY RIM (IDs 3–6)</span>
+                  <span className="text-[11px]">
+                    Detected IDs: [{maxillaDetectedIds.join(', ')}] · Missing: [{maxillaMissingIds.join(', ')}]
                   </span>
                 </div>
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  <span className="text-slate-300">Maxilla (3-6):</span>
-                  <span className="text-amber-300 font-bold">SIMULATED</span>
-                </div>
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  <span className="text-slate-300">Mandible (7-10):</span>
-                  <span className="text-amber-300 font-bold">SIMULATED</span>
-                </div>
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 font-bold">
-                  <span>VDO (SIM):</span>
-                  <span>{simVdo.toFixed(1)}mm</span>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Dedicated Marker Test Mode Panel OR Focused Clinical Lower HUD */}
-        {mode === 'WEBCAM' && isMarkerTestMode ? (
-          <div className="absolute bottom-3 left-3 right-3 sm:left-auto sm:right-4 sm:w-[440px] pointer-events-auto z-20">
-            <div className="bg-slate-950/92 backdrop-blur-md border border-slate-800 rounded-2xl p-3.5 shadow-2xl space-y-2.5 text-xs">
-              <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2">
-                <div className="flex items-center gap-2">
-                  <Target className="w-4 h-4 text-emerald-400" />
-                  <div>
-                    <h4 className="font-bold text-white text-xs">Marker Test Mode ({ARUCO_DICTIONARY_NAME})</h4>
-                    <p className="text-[10px] text-slate-400">Live camera verification · No simulated detections</p>
-                  </div>
-                </div>
-                {/* Truthful Pass/Unavailable Badge */}
-                {(() => {
-                  const singlePassed = cameraActive && Boolean(frameDiag?.frameProcessed) && liveMarkers.length >= 1;
-                  const multiMatches = expectedTestIds.filter(id => detectedIds.includes(id));
-                  const multiPassed = cameraActive && Boolean(frameDiag?.frameProcessed) && multiMatches.length === expectedTestIds.length;
-                  const passed = testStep === 'SINGLE' ? singlePassed : multiPassed;
-                  return (
-                    <span className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold border ${
-                      passed
-                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
-                        : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                    }`}>
-                      {passed ? 'VERIFIED LIVE' : !cameraActive ? 'UNAVAILABLE' : 'WAITING'}
-                    </span>
-                  );
-                })()}
+                <span className="px-2 py-0.5 rounded bg-cyan-900/60 text-cyan-200 font-bold text-xs shrink-0">
+                  Count {maxillaDetectedCount}/4
+                </span>
               </div>
 
-              {/* Step 1 vs Step 2 Toggle */}
-              <div className="grid grid-cols-2 gap-1.5">
-                <button
-                  onClick={() => setTestStep('SINGLE')}
-                  className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer ${
-                    testStep === 'SINGLE'
-                      ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
-                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Step 1: Single Marker
-                </button>
-                <button
-                  onClick={() => setTestStep('MULTI')}
-                  className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer ${
-                    testStep === 'MULTI'
-                      ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
-                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Step 2: Multi-Marker Array
-                </button>
-              </div>
-
-              {testStep === 'MULTI' && (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {[
-                    { id: 'MAXILLA', label: 'Maxilla (3–6)' },
-                    { id: 'MANDIBLE', label: 'Mandible (7–10)' },
-                    { id: 'CALIBRATION', label: 'Calib Card (20–28)' },
-                    { id: 'CLINICAL_ALL', label: 'Both Rims (3–10)' },
-                  ].map(p => (
-                    <button
-                      key={p.id}
-                      onClick={() => setTestPreset(p.id as typeof testPreset)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-mono border cursor-pointer ${
-                        testPreset === p.id
-                          ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 font-bold'
-                          : 'bg-slate-900 border-slate-800 text-slate-400'
-                      }`}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Live Telemetry Readout Grid */}
-              <div className="grid grid-cols-2 gap-1.5 font-mono text-[10px] bg-slate-900/90 p-2 rounded-xl border border-slate-800">
-                <div><span className="text-slate-400">CAMERA: </span><span className="text-white font-bold">{arucoPipelineDiag.cameraLabel}</span></div>
-                <div><span className="text-slate-400">ARUCO: </span><span className={liveMarkers.length > 0 ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{arucoPipelineDiag.arucoStatusLabel}</span></div>
-                <div><span className="text-slate-400">FACE TRACKING: </span><span className={faceTrackingDetected ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{arucoPipelineDiag.faceTrackingStatus}</span></div>
-                <div><span className="text-slate-400">DICT / TIME: </span><span className="text-cyan-300 font-bold">{ARUCO_DICTIONARY_NAME}</span> <span className="text-slate-400">({frameDiag ? `${frameDiag.processingTimeMs.toFixed(1)} ms` : '—'})</span></div>
-                <div className="col-span-2">
-                  <span className="text-slate-400">MARKERS DETECTED: </span>
-                  <span className="text-white font-bold">
-                    {testStep === 'SINGLE'
-                      ? `${liveMarkers.length} detected (need ≥1)`
-                      : `${expectedTestIds.filter(id => detectedIds.includes(id)).length} / ${expectedTestIds.length} expected (${liveMarkers.length} total)`}
+              {/* Mandibular Group (IDs 7, 8, 9, 10) */}
+              <div className="px-2.5 py-1.5 rounded-lg bg-amber-950/40 border border-amber-500/40 text-amber-100 flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-bold text-amber-400 block">MANDIBULAR RIM (IDs 7–10)</span>
+                  <span className="text-[11px]">
+                    Detected IDs: [{mandibleDetectedIds.join(', ')}] · Missing: [{mandibleMissingIds.join(', ')}]
                   </span>
                 </div>
-                <div className="col-span-2">
-                  <span className="text-slate-400">DETECTED IDs: </span>
-                  <span className="text-emerald-300 font-bold">{detectedIds.length > 0 ? detectedIds.map(id => `#${id}`).join(', ') : 'None'}</span>
-                </div>
-                {testStep === 'MULTI' && (
-                  <div className="col-span-2">
-                    <span className="text-slate-400">MISSING TARGET IDs: </span>
-                    <span className="text-amber-300">
-                      {expectedTestIds.filter(id => !detectedIds.includes(id)).length > 0
-                        ? expectedTestIds.filter(id => !detectedIds.includes(id)).map(id => `#${id}`).join(', ')
-                        : 'None (100% visible)'}
-                    </span>
-                  </div>
-                )}
-                <div className="col-span-2">
-                  <span className="text-slate-400">LAST DETECTION: </span>
-                  <span className="text-slate-200">
-                    {lastSuccessDetectionTime ? new Date(lastSuccessDetectionTime).toLocaleTimeString() : 'No detection yet in this session'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Granular Diagnostic Message */}
-              <div className={`p-2 rounded-lg border text-[11px] leading-snug ${
-                arucoPipelineDiag.severity === 'READY'
-                  ? 'bg-emerald-950/50 border-emerald-600/40 text-emerald-200'
-                  : arucoPipelineDiag.severity === 'ERROR'
-                  ? 'bg-rose-950/50 border-rose-600/40 text-rose-200'
-                  : 'bg-amber-950/40 border-amber-600/30 text-amber-200'
-              }`}>
-                <div className="font-bold">{arucoPipelineDiag.title}</div>
-                <div className="text-[10px] opacity-90 mt-0.5">{arucoPipelineDiag.guidance}</div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="absolute bottom-4 inset-x-0 flex flex-col items-center gap-3 pointer-events-auto z-20 px-4">
-            {/* 1. Single Tracking Status Indicator */}
-            <div className={`px-3 py-1 rounded-full border backdrop-blur-md text-xs font-semibold flex items-center gap-2 shadow-lg ${status.color}`}>
-              <span className={`w-2 h-2 rounded-full ${status.dot}`} />
-              <span>{status.label}</span>
-            </div>
-
-            {/* 2. Clear Actionable Instruction (includes live CV diagnostic if webcam active with no markers) */}
-            <p className="text-xs sm:text-sm text-slate-200 font-medium text-center max-w-md drop-shadow-md">
-              {mode === 'WEBCAM' && liveMarkers.length === 0 ? arucoPipelineDiag.guidance : instruction}
-            </p>
-
-            {/* 3. Primary Shutter Action Button */}
-            <div className="flex items-center gap-8 mt-1">
-              <button
-                onClick={handleTriggerShutter}
-                disabled={!opticalDiagnostic.engineeringTestAllowed}
-                className={`relative flex items-center justify-center w-16 h-16 rounded-full transition-transform active:scale-95 cursor-pointer shadow-xl ${
-                  opticalDiagnostic.engineeringTestAllowed
-                    ? 'bg-white ring-4 ring-teal-500/60 hover:ring-teal-400'
-                    : 'bg-slate-800 ring-4 ring-slate-700/50 opacity-40 cursor-not-allowed'
-                }`}
-                title={
-                  opticalDiagnostic.engineeringTestAllowed
-                    ? 'Record Jaw Relation Trial'
-                    : `Gated: ${opticalDiagnostic.actionableGuidance}`
-                }
-                aria-label="Capture Record"
-              >
-                <div className={`w-13 h-13 rounded-full flex items-center justify-center transition-colors ${
-                  opticalDiagnostic.engineeringTestAllowed
-                    ? 'bg-teal-700 text-white'
-                    : 'bg-slate-700 text-slate-400'
-                }`}>
-                  <Camera className="w-6 h-6" />
-                </div>
-              </button>
-            </div>
-
-            {/* 4. Secondary Action: View Clinical Records */}
-            <button
-              onClick={() => onNavigateToTab('records')}
-              className="text-xs text-slate-400 hover:text-teal-400 font-semibold flex items-center gap-1 transition-colors mt-1 py-1 px-3 cursor-pointer"
-            >
-              <span>View Recorded Trials</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Developer Diagnostics Slide-over Drawer (Visible only when developerMode is active & toggled) */}
-      {isDevDrawerOpen && (
-        <div className="fixed inset-y-0 right-0 w-full sm:w-96 bg-slate-950/95 backdrop-blur-xl border-l border-slate-800 shadow-2xl z-50 flex flex-col animate-slideLeft">
-          <div className="p-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-teal-400" />
-              <h3 className="text-sm font-bold text-white">Developer Diagnostics</h3>
-            </div>
-            <button
-              onClick={() => setIsDevDrawerOpen(false)}
-              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs font-mono">
-            {/* FPS & Optical State */}
-            <div className="p-3 bg-slate-900 rounded-xl space-y-2 border border-slate-800">
-              <div className="flex justify-between items-center text-slate-400">
-                <span>Framerate:</span>
-                <span className="text-white font-bold">{fps} FPS</span>
-              </div>
-              <div className="flex justify-between items-center text-slate-400">
-                <span>Diagnostic State:</span>
-                <span className="text-teal-400 font-bold">{opticalDiagnostic.state}</span>
-              </div>
-              <div className="flex justify-between items-center text-slate-400">
-                <span>Capture Allowed:</span>
-                <span className={opticalDiagnostic.engineeringTestAllowed ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
-                  {opticalDiagnostic.engineeringTestAllowed ? 'TRUE' : 'FALSE'}
+                <span className="px-2 py-0.5 rounded bg-amber-900/60 text-amber-200 font-bold text-xs shrink-0">
+                  Count {mandibleDetectedCount}/4
                 </span>
               </div>
             </div>
 
-            {/* Tracking Telemetry */}
-            <div className="p-3 bg-slate-900 rounded-xl space-y-2 border border-slate-800">
-              <h4 className="text-[11px] font-bold text-slate-300 uppercase">Pose &amp; Distance</h4>
-              <div className="flex justify-between items-center text-slate-400">
-                <span>Distance:</span>
-                <span className="text-teal-400 font-bold">{trackingData?.estimatedDistanceCm ?? simDistance} cm</span>
-              </div>
-              <div className="flex justify-between items-center text-slate-400">
-                <span>Roll Deg:</span>
-                <span className="text-amber-400 font-bold">{trackingData?.rollDeg.toFixed(1) ?? '0.0'}°</span>
-              </div>
-              <div className="flex justify-between items-center text-slate-400">
-                <span>Mouth Open:</span>
-                <span className="text-white font-bold">{((trackingData?.mouthOpenFraction ?? 0) * 100).toFixed(0)}%</span>
-              </div>
-            </div>
-
-            {/* Simulation Kinematics Controls */}
-            {mode === 'SIMULATION' && (
-              <div className="p-3 bg-slate-900 rounded-xl space-y-3 border border-slate-800">
-                <h4 className="text-[11px] font-bold text-amber-400 uppercase">Simulation Controls</h4>
-                <div>
-                  <div className="flex justify-between text-slate-400 mb-1">
-                    <span>Simulated VDO:</span>
-                    <span className="text-white font-bold">{simVdo.toFixed(1)} mm</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="50"
-                    max="75"
-                    step="0.5"
-                    value={simVdo}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      setSimVdo(val);
-                      onUpdateVdo(val);
-                    }}
-                    className="w-full accent-teal-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
-                  />
-                </div>
-                <div>
-                  <div className="flex justify-between text-slate-400 mb-1">
-                    <span>Simulated Tilt M-L:</span>
-                    <span className="text-white font-bold">{simTiltML.toFixed(1)}°</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="-8"
-                    max="8"
-                    step="0.2"
-                    value={simTiltML}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      setSimTiltML(val);
-                      onUpdateTiltML(val);
-                    }}
-                    className="w-full accent-teal-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Calibration & Tools Buttons */}
-            <div className="space-y-2 pt-2">
-              <button
-                onClick={() => setIsCalibrationModalOpen(true)}
-                className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-semibold text-xs transition-colors cursor-pointer"
-              >
-                Camera Calibration Intrinsics
-              </button>
-              <button
-                onClick={() => setIsSelfCorrectionModalOpen(true)}
-                className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-semibold text-xs transition-colors cursor-pointer"
-              >
-                Software Self-Correction Proof
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modals */}
-      <CameraCalibrationModal
-        isOpen={isCalibrationModalOpen}
-        onClose={() => setIsCalibrationModalOpen(false)}
-        currentSettings={calibrationSettings}
-        currentMeasuredDistanceCm={trackingData?.estimatedDistanceCm ?? simDistance}
-        onSaveSettings={(settings: CameraCalibrationSettings) => setCalibrationSettings(settings)}
-      />
-
-      <SoftwareSelfCorrectionModal
-        isOpen={isSelfCorrectionModalOpen}
-        onClose={() => setIsSelfCorrectionModalOpen(false)}
-        phoneRollDeg={trackingData?.rollDeg ?? 0}
-        distanceCm={trackingData?.estimatedDistanceCm ?? simDistance}
-        vdoMm={simVdo}
-      />
-
-      {/* Module 4: Marker Detection Telemetry & CAD Geometry Modal */}
-      {isMarkerInspectorOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="px-5 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Target className="w-5 h-5 text-teal-400" />
-                <div>
-                  <h3 className="text-base font-bold text-white">ArUco Marker Telemetry &amp; CAD Geometry</h3>
-                  <p className="text-xs text-slate-400">OpenCV DICT_4X4_50 Fiducial Carrier Boards · Sub-Millimeter Datums</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsMarkerInspectorOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-5 overflow-y-auto space-y-4 text-xs">
-              {/* Granular Diagnostic Status Banner */}
-              <div className={`p-3.5 rounded-xl border flex items-start gap-2.5 ${
-                mode === 'SIMULATION'
-                  ? 'bg-amber-950/40 border-amber-800/60 text-amber-200'
-                  : arucoPipelineDiag.severity === 'READY'
-                  ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-200'
-                  : arucoPipelineDiag.severity === 'ERROR'
-                  ? 'bg-rose-950/40 border-rose-800/60 text-rose-200'
-                  : 'bg-slate-950 border-slate-800 text-slate-300'
-              }`}>
-                <Info className="w-4 h-4 shrink-0 mt-0.5" />
-                <div className="space-y-1">
-                  <span className="font-bold block">
-                    {mode === 'SIMULATION'
-                      ? 'SIMULATED DEMONSTRATION ACTIVE'
-                      : `${arucoPipelineDiag.title}`}
+            {/* Factual Status Line + Capture Action */}
+            <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-slate-800/80 text-[11px]">
+              <div className="text-slate-300">
+                {liveMarkers.length > 0 ? (
+                  <span className="text-emerald-400 font-bold">
+                    MARKERS DETECTED: [{detectedIds.map((id) => `#${id}`).join(', ')}]
+                    {arucoPipelineDiag.qualityWarnings.length > 0 && (
+                      <span className="text-amber-300 font-normal ml-2">
+                        (Note: {arucoPipelineDiag.qualityWarnings[0]})
+                      </span>
+                    )}
                   </span>
-                  <p className="text-[11px] text-slate-300">
-                    {mode === 'SIMULATION'
-                      ? 'Carrier board positions generated by kinematic simulator for UI demonstration.'
-                      : arucoPipelineDiag.guidance}
-                  </p>
-                </div>
-              </div>
-
-              {/* Mandatory Live ArUco Telemetry Summary Block */}
-              {mode === 'WEBCAM' && (
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 font-mono text-[11px] space-y-2">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    <div><span className="text-slate-400 block text-[10px]">CAMERA</span><span className="text-white font-bold">{arucoPipelineDiag.cameraLabel}</span></div>
-                    <div><span className="text-slate-400 block text-[10px]">ARUCO DETECTION</span><span className={liveMarkers.length > 0 ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{arucoPipelineDiag.arucoStatusLabel}</span></div>
-                    <div><span className="text-slate-400 block text-[10px]">DICTIONARY</span><span className="text-cyan-300 font-bold">{ARUCO_DICTIONARY_NAME}</span></div>
-                    <div><span className="text-slate-400 block text-[10px]">RIM MARKERS</span><span className="text-white font-bold">{liveMarkers.filter(m => m.id >= 3 && m.id <= 10).length} / 8 rim ({liveMarkers.length} total)</span></div>
-                    <div><span className="text-slate-400 block text-[10px]">PROCESSING TIME</span><span className="text-white font-bold">{frameDiag ? `${frameDiag.processingTimeMs.toFixed(1)} ms` : '—'}</span></div>
-                    <div><span className="text-slate-400 block text-[10px]">LAST DETECTION</span><span className="text-white font-bold">{lastSuccessDetectionTime ? new Date(lastSuccessDetectionTime).toLocaleTimeString() : 'None'}</span></div>
-                  </div>
-                  <div className="pt-2 border-t border-slate-800 space-y-1">
-                    <div><span className="text-slate-400">DETECTED IDs: </span><span className="text-emerald-300 font-bold">{detectedIds.length > 0 ? detectedIds.map(id => `#${id}`).join(', ') : 'None'}</span></div>
-                    <div><span className="text-slate-400">MISSING RIM IDs (3–10): </span><span className="text-amber-300">{arucoPipelineDiag.missingClinicalIds.length > 0 ? arucoPipelineDiag.missingClinicalIds.map(id => `#${id}`).join(', ') : 'None'}</span></div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800 text-[10px]">
-                    <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
-                      <span className="text-slate-400 block">Natural Face Tracking</span>
-                      <span className={faceTrackingDetected ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{arucoPipelineDiag.faceTrackingStatus}</span>
-                    </div>
-                    <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
-                      <span className="text-slate-400 block">Maxilla (3–6)</span>
-                      <span className={maxillaryAllVisible ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{maxillaDetectedCount}/4 · {arucoPipelineDiag.maxillaGroupStatus.status}</span>
-                    </div>
-                    <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
-                      <span className="text-slate-400 block">Mandible (7–10)</span>
-                      <span className={mandibularAllVisible ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>{mandibleDetectedCount}/4 · {arucoPipelineDiag.mandibleGroupStatus.status}</span>
-                    </div>
-                  </div>
-                  {arucoPipelineDiag.qualityWarnings.length > 0 && (
-                    <div className="pt-2 border-t border-slate-800 text-[10px] text-amber-300">
-                      <span className="font-bold">QUALITY WARNINGS: </span>
-                      <span>{arucoPipelineDiag.qualityWarnings.join(' · ')}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Detected Markers Table */}
-              <div className="space-y-2">
-                <h4 className="font-bold text-white uppercase tracking-wider text-[11px]">
-                  Detected Fiducials Telemetry Table:
-                </h4>
-
-                {mode === 'SIMULATION' ? (
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono space-y-1.5">
-                    <div className="flex justify-between text-teal-400 font-bold border-b border-slate-800 pb-1">
-                      <span>Array</span>
-                      <span>IDs</span>
-                      <span>Coordinates (px)</span>
-                      <span>Status</span>
-                    </div>
-                    <div className="flex justify-between text-slate-300">
-                      <span>Maxilla Board</span>
-                      <span>#3, #4, #5, #6</span>
-                      <span>Simulated Viewport</span>
-                      <span className="text-amber-400">SIMULATED</span>
-                    </div>
-                    <div className="flex justify-between text-slate-300">
-                      <span>Mandible Board</span>
-                      <span>#7, #8, #9, #10</span>
-                      <span>Simulated Viewport</span>
-                      <span className="text-amber-400">SIMULATED</span>
-                    </div>
-                  </div>
-                ) : liveMarkers.length > 0 ? (
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-x-auto">
-                    <table className="w-full text-left font-mono">
-                      <thead className="bg-slate-900 text-slate-400 border-b border-slate-800">
-                        <tr>
-                          <th className="p-2">ID</th>
-                          <th className="p-2">Group</th>
-                          <th className="p-2">Center (px)</th>
-                          <th className="p-2">Pose tvec (m)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800 text-slate-300">
-                        {liveMarkers.map(m => {
-                          const group =
-                            m.id >= 3 && m.id <= 6
-                              ? 'Maxilla'
-                              : m.id >= 7 && m.id <= 10
-                              ? 'Mandible'
-                              : m.id >= 11 && m.id <= 12
-                              ? 'Hanau'
-                              : m.id >= 20 && m.id <= 28
-                              ? 'Calibration'
-                              : 'DICT_4X4_50';
-                          return (
-                            <tr key={m.id}>
-                              <td className="p-2 font-bold text-teal-400">#{m.id}</td>
-                              <td className="p-2">{group}</td>
-                              <td className="p-2">({m.center.x.toFixed(0)}, {m.center.y.toFixed(0)})</td>
-                              <td className="p-2 text-slate-400">[{m.tvec.map(v => v.toFixed(3)).join(', ')}]</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
                 ) : (
-                  <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl text-center text-slate-400 font-mono">
-                    {arucoPipelineDiag.title} · {frameDiag ? `Quads: ${frameDiag.rawQuadsFound} · Luma: ${frameDiag.meanLuminance}` : '0 markers visible'}
-                  </div>
+                  <span className="text-amber-300">
+                    NO MARKER FOUND — {cand.quads} candidate squares: {cand.rejectedTooSmall} too small /{' '}
+                    {cand.rejectedBorder} border / {cand.rejectedDictionary} pattern / {cand.rejectedFlat} flat
+                  </span>
                 )}
               </div>
 
-              {/* Physical CAD Geometry Specifications */}
-              <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2.5">
-                <h4 className="font-bold text-teal-400 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
-                  <Grid className="w-4 h-4" />
-                  <span>Physical Carrier Board &amp; Marker Dimensions</span>
-                </h4>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-center">
-                  <div className="p-2 bg-slate-900 rounded-lg">
-                    <span className="text-slate-400 block text-[10px]">Board Width</span>
-                    <span className="font-bold text-white text-sm">18.0 mm</span>
-                  </div>
-                  <div className="p-2 bg-slate-900 rounded-lg">
-                    <span className="text-slate-400 block text-[10px]">Marker Width</span>
-                    <span className="font-bold text-teal-300 text-sm">6.5 / 14 mm</span>
-                  </div>
-                  <div className="p-2 bg-slate-900 rounded-lg">
-                    <span className="text-slate-400 block text-[10px]">Marker Pitch</span>
-                    <span className="font-bold text-white text-sm">7.5 mm</span>
-                  </div>
-                  <div className="p-2 bg-slate-900 rounded-lg">
-                    <span className="text-slate-400 block text-[10px]">Quiet Margin</span>
-                    <span className="font-bold text-white text-sm">2.0 mm</span>
-                  </div>
-                </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  <strong>Dimension Documentation:</strong> The standard SmartBow carrier plate measures exactly <strong>18.0 × 18.0 × 3.0 mm</strong>. 
-                  Individual black square markers measure <strong>6.5 × 6.5 mm</strong> (in the 2×2 cluster) or <strong>14.0 × 14.0 mm</strong> (single target), with a <strong>7.5 mm</strong> center-to-center pitch and a <strong>2.0 mm</strong> quiet zone margin.
-                </p>
-              </div>
-            </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleTriggerShutter}
+                  disabled={!opticalDiagnostic.engineeringTestAllowed}
+                  className={`px-3 py-1 rounded-lg font-sans font-bold text-xs flex items-center gap-1.5 transition-colors ${
+                    opticalDiagnostic.engineeringTestAllowed
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer'
+                      : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                  }`}
+                  title={opticalDiagnostic.actionableGuidance}
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>Capture Trial</span>
+                </button>
 
-            <div className="px-5 py-3 bg-slate-950 border-t border-slate-800 flex justify-end">
-              <button
-                onClick={() => setIsMarkerInspectorOpen(false)}
-                className="px-4 py-2 bg-teal-700 hover:bg-teal-600 text-white font-bold rounded-lg transition-colors cursor-pointer"
-              >
-                Close Inspector
-              </button>
+                <button
+                  onClick={() => onNavigateToTab('records')}
+                  className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white font-sans font-semibold text-xs flex items-center gap-1 cursor-pointer"
+                >
+                  <span>Records</span>
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      )}
+      </div>
+
+      {/* Real Runtime Self-Check Modal */}
+      <ScannerSelfCheckModal
+        isOpen={isSelfCheckOpen}
+        onClose={() => setIsSelfCheckOpen(false)}
+        checkInput={{
+          cameraActive: cameraActive && cameraPoweredOn,
+          videoWidth: actualResolution?.width ?? 0,
+          videoHeight: actualResolution?.height ?? 0,
+          cameraError: cameraPermissionError,
+          faceModelState: mpModelState,
+          fps,
+          arucoFrameTimeMs: frameDiag?.processingTimeMs ?? null,
+          faceInferenceTimeMs,
+        }}
+      />
     </div>
   );
 };

@@ -261,7 +261,7 @@ export function evaluateArucoPipelineDiagnostic(
     rejectedFlat: frameDiag?.rejectedLowContrastCount ?? 0,
   };
 
-  const candidateStatsText = `Candidates [Quads: ${candidateSummary.quads}, TooSmall: ${candidateSummary.rejectedTooSmall}, Border: ${candidateSummary.rejectedBorder}, Dict: ${candidateSummary.rejectedDictionary}, Flat: ${candidateSummary.rejectedFlat}].`;
+  const candidateStatsText = `NO MARKER FOUND — ${candidateSummary.quads} candidate squares: ${candidateSummary.rejectedTooSmall} too small / ${candidateSummary.rejectedBorder} border / ${candidateSummary.rejectedDictionary} pattern / ${candidateSummary.rejectedFlat} flat.`;
 
   const errLower = (cameraError || '').toLowerCase();
   const isPermissionDenied =

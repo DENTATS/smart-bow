@@ -88,7 +88,7 @@ const DEFAULT_PATIENT_CASE: PatientCase = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<MainNavTab>('home');
+  const [activeTab, setActiveTab] = useState<MainNavTab>('scanner');
   const [recordsSubtab, setRecordsSubtab] = useState<RecordsSubtab>('vdo');
   const [developerMode, setDeveloperMode] = useState<boolean>(() => {
     return localStorage.getItem('smartbow_dev_mode') === 'true';
@@ -393,6 +393,9 @@ export default function App() {
         patientId={activeCase.patientId}
         patientName={activeCase.name}
         onOpenReport={() => setIsReportOpen(true)}
+        onOpenMarkers={() => setIsMarkersOpen(true)}
+        onOpenDatabase={() => setIsDatabaseOpen(true)}
+        onOpenManual={() => setIsManualOpen(true)}
         onEditPatient={handleOpenEditActivePatient}
         isSimulated={activeCase.dataProvenance === 'SIMULATED'}
         onLaunchTour={() => setIsTourOpen(true)}
@@ -400,7 +403,7 @@ export default function App() {
       />
 
       {/* Main Clinical Screen Viewport */}
-      <main className="flex-1 pb-16 md:pb-0">
+      <main className="flex-1">
         {activeTab === 'home' && (
           <HomeDashboard
             patientCase={activeCase}
@@ -446,6 +449,10 @@ export default function App() {
             onUpdateMidline={handleUpdateMidline}
             onRecordCrTrial={handleAddCrRecord}
             onNavigateToTab={setActiveTab}
+            calibrationSettings={calibrationSettings}
+            onOpenCalibration={() => setIsCalibrationOpen(true)}
+            onOpenManual={() => setIsManualOpen(true)}
+            onOpenMarkers={() => setIsMarkersOpen(true)}
             developerMode={developerMode}
           />
         )}
