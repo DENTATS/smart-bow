@@ -193,6 +193,268 @@ export interface AutoFaceDetectionOutput {
 }
 
 /**
+ * Maximum age in milliseconds for a MediaPipe detectVideoFrame result to be treated as active.
+ * If no frame was processed by detectVideoFrame in the last 500 ms, face tracking is treated as NOT DETECTED.
+ */
+export const FACE_DETECTION_FRESHNESS_TIMEOUT_MS = 500;
+
+export interface LiveFaceTrackingEvaluationInput {
+  cameraActive: boolean;
+  cameraPoweredOn: boolean;
+  videoReady: boolean;
+  videoPausedOrEnded: boolean;
+  mode: 'WEBCAM' | 'SIMULATION';
+  faceMode: 'AUTO' | 'MANUAL';
+  rawAutoDetected: boolean;
+  rawRollDeg: number;
+  rawLandmarks: Array<{ x: number; y: number; z: number }>;
+  lastProcessedFrameTimeMs: number | null;
+  nowMs: number;
+}
+
+export interface LiveFaceTrackingEvaluationResult {
+  autoDetected: boolean;
+  rollDeg: number;
+  landmarks: Array<{ x: number; y: number; z: number }>;
+  hasAutoLandmarksAvailable: boolean;
+  isFresh: boolean;
+  reason:
+    | 'CAMERA_OFF_OR_INACTIVE'
+    | 'MANUAL_MODE_ACTIVE'
+    | 'STALE_FRAME_TIMEOUT'
+    | 'DETECTED_FRESH'
+    | 'NO_FACE_IN_FRAME';
+}
+
+/**
+ * Pure, deterministic state resolver for live automatic face tracking:
+ * 1. Immediately clears detection, landmarks, roll, and hasAutoLandmarksAvailable when
+ *    camera stops/is powered off, video is paused/ended, mode is not WEBCAM, or faceMode is MANUAL.
+ * 2. Enforces the 500 ms freshness rule: if no frame was processed by detectVideoFrame in the
+ *    last 500 ms, treats the face as NOT DETECTED even if the camera is on.
+ */
+export function resolveLiveFaceTrackingState(
+  input: LiveFaceTrackingEvaluationInput
+): LiveFaceTrackingEvaluationResult {
+  if (input.faceMode === 'MANUAL') {
+    return {
+      autoDetected: false,
+      rollDeg: 0,
+      landmarks: [],
+      hasAutoLandmarksAvailable: false,
+      isFresh: false,
+      reason: 'MANUAL_MODE_ACTIVE',
+    };
+  }
+
+  if (
+    !input.cameraActive ||
+    !input.cameraPoweredOn ||
+    !input.videoReady ||
+    input.videoPausedOrEnded ||
+    input.mode !== 'WEBCAM'
+  ) {
+    return {
+      autoDetected: false,
+      rollDeg: 0,
+      landmarks: [],
+      hasAutoLandmarksAvailable: false,
+      isFresh: false,
+      reason: 'CAMERA_OFF_OR_INACTIVE',
+    };
+  }
+
+  const frameAgeMs =
+    input.lastProcessedFrameTimeMs === null
+      ? Number.POSITIVE_INFINITY
+      : input.nowMs - input.lastProcessedFrameTimeMs;
+
+  if (frameAgeMs > FACE_DETECTION_FRESHNESS_TIMEOUT_MS) {
+    return {
+      autoDetected: false,
+      rollDeg: 0,
+      landmarks: [],
+      hasAutoLandmarksAvailable: false,
+      isFresh: false,
+      reason: 'STALE_FRAME_TIMEOUT',
+    };
+  }
+
+  if (!input.rawAutoDetected || input.rawLandmarks.length < 468) {
+    return {
+      autoDetected: false,
+      rollDeg: 0,
+      landmarks: [],
+      hasAutoLandmarksAvailable: false,
+      isFresh: true,
+      reason: 'NO_FACE_IN_FRAME',
+    };
+  }
+
+  return {
+    autoDetected: true,
+    rollDeg: input.rawRollDeg,
+    landmarks: input.rawLandmarks,
+    hasAutoLandmarksAvailable: true,
+    isFresh: true,
+    reason: 'DETECTED_FRESH',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Live Scanner Layout Helpers (Clamping, One-Line Collapsed Summary, Persistence)
+// ---------------------------------------------------------------------------
+
+export interface FloatingPanelConfig {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  minimised: boolean;
+  closed: boolean;
+  opacityPct: number; // 30..100
+}
+
+export interface ScannerLayoutState {
+  floatPanels: boolean;
+  hidePanels: boolean;
+  videoFitMode: 'FIT' | 'FILL';
+  mobileSheetExpanded: boolean;
+  facePanel: FloatingPanelConfig;
+  markerPanel: FloatingPanelConfig;
+}
+
+export const SCANNER_LAYOUT_STORAGE_KEY = 'smartbow_scanner_layout_v1';
+
+export const DEFAULT_SCANNER_LAYOUT_STATE: ScannerLayoutState = {
+  floatPanels: false,
+  hidePanels: false,
+  videoFitMode: 'FIT',
+  mobileSheetExpanded: false,
+  facePanel: {
+    x: 16,
+    y: 64,
+    width: 360,
+    height: 220,
+    minimised: false,
+    closed: false,
+    opacityPct: 92,
+  },
+  markerPanel: {
+    x: 16,
+    y: 300,
+    width: 360,
+    height: 210,
+    minimised: false,
+    closed: false,
+    opacityPct: 92,
+  },
+};
+
+/**
+ * Clamps a floating panel's (x, y) position so the entire panel stays within the viewport bounds.
+ */
+export function clampFloatingPanelPosition(
+  pos: { x: number; y: number },
+  panelSize: { width: number; height: number },
+  viewport: { width: number; height: number },
+  marginPx: number = 8
+): { x: number; y: number } {
+  const safeVw = Math.max(120, viewport.width);
+  const safeVh = Math.max(120, viewport.height);
+  const effectiveW = Math.min(Math.max(140, panelSize.width), safeVw - marginPx * 2);
+  const effectiveH = Math.min(Math.max(40, panelSize.height), safeVh - marginPx * 2);
+
+  const minX = marginPx;
+  const minY = marginPx;
+  const maxX = Math.max(minX, safeVw - effectiveW - marginPx);
+  const maxY = Math.max(minY, safeVh - effectiveH - marginPx);
+
+  return {
+    x: Math.round(Math.max(minX, Math.min(maxX, pos.x))),
+    y: Math.round(Math.max(minY, Math.min(maxY, pos.y))),
+  };
+}
+
+/**
+ * Formats the single-line collapsed summary text for the mobile bottom sheet and full-screen status chip,
+ * e.g. "FACE: DETECTED · MAX 2/4 · MAND 0/4" or "FACE: NOT DETECTED · MAX 0/4 · MAND 0/4"
+ * or "FACE: MANUAL (3/9) · MAX 4/4 · MAND 4/4".
+ */
+export function formatCollapsedScannerSummary(params: {
+  faceMode: 'AUTO' | 'MANUAL';
+  autoDetected: boolean;
+  manualPlacedCount: number;
+  maxillaCount: number;
+  mandibleCount: number;
+}): string {
+  const facePart =
+    params.faceMode === 'MANUAL'
+      ? `FACE: MANUAL (${Math.max(0, Math.min(9, params.manualPlacedCount))}/9)`
+      : params.autoDetected
+      ? 'FACE: DETECTED'
+      : 'FACE: NOT DETECTED';
+  const maxCount = Math.max(0, Math.min(4, params.maxillaCount));
+  const mandCount = Math.max(0, Math.min(4, params.mandibleCount));
+  return `${facePart} · MAX ${maxCount}/4 · MAND ${mandCount}/4`;
+}
+
+export function loadScannerLayoutState(storage?: Pick<Storage, 'getItem'>): ScannerLayoutState {
+  try {
+    const store = storage ?? (typeof window !== 'undefined' ? window.localStorage : undefined);
+    if (!store) return { ...DEFAULT_SCANNER_LAYOUT_STATE };
+    const raw = store.getItem(SCANNER_LAYOUT_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_SCANNER_LAYOUT_STATE };
+    const parsed = JSON.parse(raw);
+    return {
+      ...DEFAULT_SCANNER_LAYOUT_STATE,
+      ...parsed,
+      facePanel: {
+        ...DEFAULT_SCANNER_LAYOUT_STATE.facePanel,
+        ...(parsed?.facePanel || {}),
+        opacityPct: Math.max(30, Math.min(100, Number(parsed?.facePanel?.opacityPct ?? 92))),
+      },
+      markerPanel: {
+        ...DEFAULT_SCANNER_LAYOUT_STATE.markerPanel,
+        ...(parsed?.markerPanel || {}),
+        opacityPct: Math.max(30, Math.min(100, Number(parsed?.markerPanel?.opacityPct ?? 92))),
+      },
+    };
+  } catch {
+    return { ...DEFAULT_SCANNER_LAYOUT_STATE };
+  }
+}
+
+export function saveScannerLayoutState(
+  state: ScannerLayoutState,
+  storage?: Pick<Storage, 'setItem'>
+): void {
+  try {
+    const store = storage ?? (typeof window !== 'undefined' ? window.localStorage : undefined);
+    if (!store) return;
+    store.setItem(SCANNER_LAYOUT_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Ignore storage quota / security errors
+  }
+}
+
+export function resetScannerLayoutState(
+  storage?: Pick<Storage, 'removeItem'>
+): ScannerLayoutState {
+  try {
+    const store = storage ?? (typeof window !== 'undefined' ? window.localStorage : undefined);
+    store?.removeItem(SCANNER_LAYOUT_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+  return {
+    ...DEFAULT_SCANNER_LAYOUT_STATE,
+    facePanel: { ...DEFAULT_SCANNER_LAYOUT_STATE.facePanel },
+    markerPanel: { ...DEFAULT_SCANNER_LAYOUT_STATE.markerPanel },
+  };
+}
+
+/**
  * Resolves a canonical MediaPipe landmark index from a 468/478 landmark array.
  * If iris landmarks (468, 473) are requested on a 468-point mesh, falls back to the
  * exact midpoint of the inner and outer eye corners (33/133 or 263/362).
@@ -367,7 +629,31 @@ export class MediaPipeFaceLandmarkController {
     }
   }
 
+  private static consoleFilterInstalled = false;
+
+  private static installMediaPipeInfoConsoleFilter(): void {
+    if (MediaPipeFaceLandmarkController.consoleFilterInstalled || typeof console === 'undefined') {
+      return;
+    }
+    MediaPipeFaceLandmarkController.consoleFilterInstalled = true;
+    const origError = console.error.bind(console);
+    console.error = (...args: unknown[]) => {
+      if (
+        args.length > 0 &&
+        typeof args[0] === 'string' &&
+        (args[0].startsWith('INFO: Created TensorFlow Lite') ||
+          args[0].startsWith('I0000 ') ||
+          args[0].startsWith('W0000 '))
+      ) {
+        console.info(...args);
+        return;
+      }
+      origError(...args);
+    };
+  }
+
   public async initialize(): Promise<MediaPipeFaceLandmarkerState> {
+    MediaPipeFaceLandmarkController.installMediaPipeInfoConsoleFilter();
     if (this.state.status === 'READY' && this.landmarker) {
       return this.getState();
     }

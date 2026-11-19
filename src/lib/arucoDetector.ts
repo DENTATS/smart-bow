@@ -143,6 +143,8 @@ export interface ArucoFrameDiagnostics {
   qualityWarnings?: string[];
 }
 
+export type VideoFitMode = 'FIT' | 'FILL';
+
 export interface ViewportCoverTransform {
   scale: number;
   drawX: number;
@@ -154,22 +156,27 @@ export interface ViewportCoverTransform {
   canvasH: number;
   videoW: number;
   videoH: number;
+  fitMode?: VideoFitMode;
 }
 
 /**
- * Computes exact CSS `object-fit: cover` transform between raw video frame
- * dimensions and DPR-scaled canvas pixel dimensions.
+ * Computes exact CSS `object-fit: cover` (FILL) or `object-fit: contain` (FIT) transform
+ * between raw video frame dimensions and DPR-scaled canvas pixel dimensions.
  */
-export function computeCoverTransform(
+export function computeViewportTransform(
   videoW: number,
   videoH: number,
   canvasW: number,
   canvasH: number,
-  mirrored: boolean = false
+  mirrored: boolean = false,
+  fitMode: VideoFitMode = 'FILL'
 ): ViewportCoverTransform {
   const safeVW = Math.max(1, videoW);
   const safeVH = Math.max(1, videoH);
-  const scale = Math.max(canvasW / safeVW, canvasH / safeVH);
+  const scale =
+    fitMode === 'FIT'
+      ? Math.min(canvasW / safeVW, canvasH / safeVH)
+      : Math.max(canvasW / safeVW, canvasH / safeVH);
   const drawW = safeVW * scale;
   const drawH = safeVH * scale;
   const drawX = (canvasW - drawW) / 2;
@@ -185,12 +192,41 @@ export function computeCoverTransform(
     canvasH,
     videoW: safeVW,
     videoH: safeVH,
+    fitMode,
   };
 }
 
 /**
+ * Computes exact CSS `object-fit: cover` (FILL) transform between raw video frame
+ * dimensions and DPR-scaled canvas pixel dimensions.
+ */
+export function computeCoverTransform(
+  videoW: number,
+  videoH: number,
+  canvasW: number,
+  canvasH: number,
+  mirrored: boolean = false
+): ViewportCoverTransform {
+  return computeViewportTransform(videoW, videoH, canvasW, canvasH, mirrored, 'FILL');
+}
+
+/**
+ * Computes exact CSS `object-fit: contain` (FIT) transform so the full video frame
+ * (e.g. 1280x720) is visible without cropping.
+ */
+export function computeContainTransform(
+  videoW: number,
+  videoH: number,
+  canvasW: number,
+  canvasH: number,
+  mirrored: boolean = false
+): ViewportCoverTransform {
+  return computeViewportTransform(videoW, videoH, canvasW, canvasH, mirrored, 'FIT');
+}
+
+/**
  * Maps a 2D point from source video/image pixel space into canvas pixel space
- * accounting for cover crop, DPR scaling, and horizontal mirroring.
+ * accounting for Fit (contain) or Fill (cover), DPR scaling, and horizontal mirroring.
  */
 export function mapVideoPointToCanvas(
   pt: { x: number; y: number },
@@ -203,6 +239,21 @@ export function mapVideoPointToCanvas(
   return { x, y };
 }
 
+/**
+ * Inverse mapping from canvas pixel coordinates back to source video pixel space.
+ */
+export function mapCanvasPointToVideo(
+  canvasPt: { x: number; y: number },
+  transform: ViewportCoverTransform
+): { x: number; y: number } {
+  const safeScale = Math.max(1e-6, transform.scale);
+  const unmirroredCanvasX = transform.mirrored ? transform.canvasW - canvasPt.x : canvasPt.x;
+  return {
+    x: (unmirroredCanvasX - transform.drawX) / safeScale,
+    y: (canvasPt.y - transform.drawY) / safeScale,
+  };
+}
+
 export function mapVideoCornersToCanvas(
   corners: [Point3D, Point3D, Point3D, Point3D],
   transform: ViewportCoverTransform
@@ -213,6 +264,18 @@ export function mapVideoCornersToCanvas(
     mapVideoPointToCanvas(corners[2], transform),
     mapVideoPointToCanvas(corners[3], transform),
   ];
+}
+
+/**
+ * Formats a consistent, unambiguous summary of candidate squares and pre-quad contour rejections.
+ * In the detector pipeline:
+ * - `cand.quads` is the number of 4-corner candidate squares evaluated by homography.
+ * - Those `cand.quads` are rejected as `rejectedBorder`, `rejectedDictionary` (pattern), or `rejectedFlat`
+ *   (or decoded as valid markers), so `rejectedBorder + rejectedDictionary + rejectedFlat + decoded == quads`.
+ * - `cand.rejectedTooSmall` is the count of raw binary contours rejected BEFORE quad approximation.
+ */
+export function formatCandidateRejectionSummary(cand: ArucoCandidateSummary): string {
+  return `NO MARKER FOUND — Candidates: ${cand.quads} (${cand.rejectedBorder} border / ${cand.rejectedDictionary} pattern / ${cand.rejectedFlat} flat) · Contours too small: ${cand.rejectedTooSmall}`;
 }
 
 /**

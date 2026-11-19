@@ -11,6 +11,7 @@ import { X, ShieldCheck, CheckCircle2, AlertTriangle, XCircle, RefreshCw, FlaskC
 import {
   ScannerSelfCheckInput,
   ScannerSelfCheckReport,
+  SelfCheckInjectedFault,
   runScannerSelfCheck,
 } from '../lib/scannerSelfCheck';
 
@@ -25,10 +26,10 @@ export const ScannerSelfCheckModal: React.FC<ScannerSelfCheckModalProps> = ({
   onClose,
   checkInput,
 }) => {
-  const [injectedFault, setInjectedFault] = useState<'NONE' | 'NO_CAMERA' | 'WRONG_DICT_6X6' | 'BLANK_FRAME'>('NONE');
+  const [injectedFault, setInjectedFault] = useState<SelfCheckInjectedFault>('NONE');
   const [report, setReport] = useState<ScannerSelfCheckReport | null>(null);
 
-  const executeCheck = (fault: 'NONE' | 'NO_CAMERA' | 'WRONG_DICT_6X6' | 'BLANK_FRAME' = injectedFault) => {
+  const executeCheck = (fault: SelfCheckInjectedFault = injectedFault) => {
     const result = runScannerSelfCheck({
       ...checkInput,
       injectedFault: fault,
@@ -40,7 +41,14 @@ export const ScannerSelfCheckModal: React.FC<ScannerSelfCheckModalProps> = ({
     if (isOpen) {
       executeCheck(injectedFault);
     }
-  }, [isOpen, injectedFault, checkInput.cameraActive, checkInput.videoWidth, checkInput.faceModelState.status]);
+  }, [
+    isOpen,
+    injectedFault,
+    checkInput.cameraActive,
+    checkInput.videoWidth,
+    checkInput.faceModelState.status,
+    checkInput.currentAutoFaceDetected,
+  ]);
 
   if (!isOpen) return null;
 
@@ -100,18 +108,17 @@ export const ScannerSelfCheckModal: React.FC<ScannerSelfCheckModalProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 font-mono text-[11px]">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 font-mono text-[11px]">
               {[
                 { id: 'NONE', label: 'Normal Live Input' },
                 { id: 'NO_CAMERA', label: 'No Camera (0×0)' },
                 { id: 'WRONG_DICT_6X6', label: 'Wrong Dict (6×6_250)' },
                 { id: 'BLANK_FRAME', label: 'Blank Frame' },
+                { id: 'STALE_FACE_ON_CAM_STOP', label: 'Stale Face on Stop' },
               ].map((opt) => (
                 <button
                   key={opt.id}
-                  onClick={() =>
-                    setInjectedFault(opt.id as 'NONE' | 'NO_CAMERA' | 'WRONG_DICT_6X6' | 'BLANK_FRAME')
-                  }
+                  onClick={() => setInjectedFault(opt.id as SelfCheckInjectedFault)}
                   className={`px-2 py-1.5 rounded-lg border text-center transition-colors cursor-pointer ${
                     injectedFault === opt.id
                       ? opt.id === 'NONE'

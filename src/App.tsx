@@ -4,7 +4,7 @@
  * Dr. Deepanshu · MDS Prosthodontics · Maitri College of Dentistry · Version 2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Navigation, MainNavTab } from './components/Navigation';
 import { HomeDashboard } from './components/HomeDashboard';
 import { LiveScanner } from './components/LiveScanner';
@@ -16,10 +16,10 @@ import { ClinicalReportModal } from './components/ClinicalReportModal';
 import { PatientDatabaseModal } from './components/PatientDatabaseModal';
 import { PatientSetupModal } from './components/PatientSetupModal';
 import { UserManualModal } from './components/UserManualModal';
-import { CameraCalibrationModal } from './components/CameraCalibrationModal';
+import { CameraCalibrationModal, ActiveTrackMetadata } from './components/CameraCalibrationModal';
 import { PresentationTourModal } from './components/PresentationTourModal';
 import { FacialAnalysisView } from './components/FacialAnalysisView';
-import { PatientCase, CrRecord, GothicArchPoint, DentitionState, CameraCalibrationSettings } from './types/smartbow';
+import { PatientCase, CrRecord, GothicArchPoint, DentitionState, CameraCalibrationSettings, MarkerPose } from './types/smartbow';
 import { computeCrDeviation } from './lib/clinicalMath';
 import { loadCameraCalibration } from './lib/cameraCalibration';
 
@@ -124,8 +124,37 @@ export default function App() {
   const [isValidationOpen, setIsValidationOpen] = useState<boolean>(false);
   const [isTourOpen, setIsTourOpen] = useState<boolean>(false);
 
-  // Calibration settings
+  // Calibration settings & live scanner context for automatic calibration
   const [calibrationSettings, setCalibrationSettings] = useState(loadCameraCalibration);
+  const [liveCalibrationCtx, setLiveCalibrationCtx] = useState<{
+    liveMarkers: MarkerPose[];
+    activeTrackInfo: ActiveTrackMetadata | null;
+    liveDistanceCm: number | null;
+  }>({
+    liveMarkers: [],
+    activeTrackInfo: null,
+    liveDistanceCm: null,
+  });
+
+  const handleLiveCalibrationContextChange = useCallback(
+    (next: {
+      liveMarkers: MarkerPose[];
+      activeTrackInfo: ActiveTrackMetadata | null;
+      liveDistanceCm: number | null;
+    }) => {
+      setLiveCalibrationCtx((prev) => {
+        if (
+          prev.liveMarkers === next.liveMarkers &&
+          prev.activeTrackInfo === next.activeTrackInfo &&
+          prev.liveDistanceCm === next.liveDistanceCm
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    },
+    []
+  );
 
   // Save cases to localStorage on modification
   useEffect(() => {
@@ -450,6 +479,8 @@ export default function App() {
             onRecordCrTrial={handleAddCrRecord}
             onNavigateToTab={setActiveTab}
             calibrationSettings={calibrationSettings}
+            onUpdateCalibrationSettings={setCalibrationSettings}
+            onLiveCalibrationContextChange={handleLiveCalibrationContextChange}
             onOpenCalibration={() => setIsCalibrationOpen(true)}
             onOpenManual={() => setIsManualOpen(true)}
             onOpenMarkers={() => setIsMarkersOpen(true)}
@@ -550,8 +581,10 @@ export default function App() {
         isOpen={isCalibrationOpen}
         onClose={() => setIsCalibrationOpen(false)}
         currentSettings={calibrationSettings}
-        currentMeasuredDistanceCm={48}
-        onSaveSettings={(settings: CameraCalibrationSettings) => setCalibrationSettings(settings)}
+        currentMeasuredDistanceCm={liveCalibrationCtx.liveDistanceCm ?? 48}
+        onSaveSettings={setCalibrationSettings}
+        liveMarkers={liveCalibrationCtx.liveMarkers}
+        activeTrackInfo={liveCalibrationCtx.activeTrackInfo}
       />
 
       {isValidationOpen && (

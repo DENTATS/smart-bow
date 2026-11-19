@@ -27,8 +27,12 @@ import {
   detectArucoMarkersFromImageData,
   detectArucoMarkersDetailed,
   computeCoverTransform,
+  computeContainTransform,
+  computeViewportTransform,
   mapVideoPointToCanvas,
+  mapCanvasPointToVideo,
   mapVideoCornersToCanvas,
+  formatCandidateRejectionSummary,
 } from '../src/lib/arucoDetector';
 import { SOURCED_RIM_DATUMS } from '../src/lib/prosthodonticLiterature';
 import { evaluateOpticalDiagnostic, checkCaptureReadiness, evaluateArucoPipelineDiagnostic, OPTICAL_DIAGNOSTIC_DEFINITIONS, CLINICAL_RIM_EXPECTED_IDS } from '../src/lib/opticalDiagnostics';
@@ -36,9 +40,29 @@ import { INDEPENDENT_OPENCV_GROUND_TRUTH_MARKERS } from './independentOpenCvRefe
 import {
   CANONICAL_FACE_LANDMARK_INDICES,
   MANUAL_LANDMARK_DEFINITIONS,
+  FACE_DETECTION_FRESHNESS_TIMEOUT_MS,
+  DEFAULT_SCANNER_LAYOUT_STATE,
   copyAutoLandmarksToManual,
   computeManualDerivedGeometry,
+  resolveLiveFaceTrackingState,
+  clampFloatingPanelPosition,
+  formatCollapsedScannerSummary,
+  loadScannerLayoutState,
+  saveScannerLayoutState,
+  resetScannerLayoutState,
 } from '../src/lib/faceLandmarks';
+import {
+  DEFAULT_CAMERA_CALIBRATION,
+  detectCameraProfileFromTrack,
+  evaluateCalibrationCardFrame,
+  generateSyntheticCalibrationCardFrames,
+  solveZhangPlanarCalibration,
+  computeLiveMarkerDistance,
+  formatIpdStatusText,
+  loadCameraCalibrationForDevice,
+  saveCameraCalibration,
+  resetCameraCalibrationToProfile,
+} from '../src/lib/cameraCalibration';
 import { runScannerSelfCheck } from '../src/lib/scannerSelfCheck';
 import { PatientCase, Point3D, ValidationBenchTest, OpticalDiagnosticState } from '../src/types/smartbow';
 
@@ -2181,14 +2205,474 @@ console.log('\nTest Group 24: MediaPipe Canonical Indices, Manual Landmarks & Re
   const brokenCameraCheck = runScannerSelfCheck({ ...baseCheckInput, injectedFault: 'NO_CAMERA' });
   const brokenDictCheck = runScannerSelfCheck({ ...baseCheckInput, injectedFault: 'WRONG_DICT_6X6' });
   const brokenBlankCheck = runScannerSelfCheck({ ...baseCheckInput, injectedFault: 'BLANK_FRAME' });
+  const brokenStaleFaceCheck = runScannerSelfCheck({
+    ...baseCheckInput,
+    injectedFault: 'STALE_FACE_ON_CAM_STOP',
+  });
 
   assert(
     healthyCheck.overallVerdict === 'PASS' &&
+      healthyCheck.items.find((i) => i.id === 'face_clears_on_stop')?.verdict === 'PASS' &&
       brokenCameraCheck.items.find((i) => i.id === 'camera')?.verdict === 'FAIL' &&
       brokenDictCheck.items.find((i) => i.id === 'marker_pipeline')?.verdict === 'FAIL' &&
-      brokenBlankCheck.items.find((i) => i.id === 'marker_pipeline')?.verdict === 'FAIL',
-    '24c: Scanner Self-Check passes on healthy inputs and fails the matching check when fed no camera, wrong dictionary (DICT_6X6_250), or blank frame',
-    `healthy=${healthyCheck.overallVerdict}, noCam=${brokenCameraCheck.overallVerdict}, wrongDict=${brokenDictCheck.overallVerdict}, blank=${brokenBlankCheck.overallVerdict}`
+      brokenBlankCheck.items.find((i) => i.id === 'marker_pipeline')?.verdict === 'FAIL' &&
+      brokenStaleFaceCheck.items.find((i) => i.id === 'face_clears_on_stop')?.verdict === 'FAIL',
+    '24c: Scanner Self-Check passes on healthy inputs (including Check 6 "Face status clears when camera stops") and fails when fed broken inputs',
+    `healthy=${healthyCheck.overallVerdict}, noCam=${brokenCameraCheck.overallVerdict}, wrongDict=${brokenDictCheck.overallVerdict}, blank=${brokenBlankCheck.overallVerdict}, staleFace=${brokenStaleFaceCheck.overallVerdict}`
+  );
+
+  // 24d: Camera stopping while autoFaceDetected was true immediately resets face status, roll, landmarks, and markers
+  const activeFaceState = resolveLiveFaceTrackingState({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    videoReady: true,
+    videoPausedOrEnded: false,
+    mode: 'WEBCAM',
+    faceMode: 'AUTO',
+    rawAutoDetected: true,
+    rawRollDeg: 4.6,
+    rawLandmarks: synthetic478,
+    lastProcessedFrameTimeMs: 5000,
+    nowMs: 5030,
+  });
+
+  const stoppedCamState = resolveLiveFaceTrackingState({
+    cameraActive: false,
+    cameraPoweredOn: false,
+    videoReady: false,
+    videoPausedOrEnded: true,
+    mode: 'WEBCAM',
+    faceMode: 'AUTO',
+    rawAutoDetected: true, // Even if raw state was still true before reset
+    rawRollDeg: 4.6,
+    rawLandmarks: synthetic478,
+    lastProcessedFrameTimeMs: 5000,
+    nowMs: 5050,
+  });
+
+  const manualModeState = resolveLiveFaceTrackingState({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    videoReady: true,
+    videoPausedOrEnded: false,
+    mode: 'WEBCAM',
+    faceMode: 'MANUAL',
+    rawAutoDetected: true,
+    rawRollDeg: 4.6,
+    rawLandmarks: synthetic478,
+    lastProcessedFrameTimeMs: 5000,
+    nowMs: 5050,
+  });
+
+  assert(
+    activeFaceState.autoDetected === true &&
+      activeFaceState.rollDeg === 4.6 &&
+      activeFaceState.landmarks.length === 478 &&
+      stoppedCamState.autoDetected === false &&
+      stoppedCamState.rollDeg === 0 &&
+      stoppedCamState.landmarks.length === 0 &&
+      stoppedCamState.hasAutoLandmarksAvailable === false &&
+      stoppedCamState.reason === 'CAMERA_OFF_OR_INACTIVE' &&
+      manualModeState.autoDetected === false &&
+      manualModeState.rollDeg === 0 &&
+      manualModeState.landmarks.length === 0 &&
+      manualModeState.hasAutoLandmarksAvailable === false,
+    '24d: Stopping camera, pausing video, or switching to MANUAL immediately clears autoDetected=false, roll=0, landmarks=[], and hasAutoLandmarksAvailable=false',
+    `stopped=${JSON.stringify(stoppedCamState)}, manual=${JSON.stringify(manualModeState)}`
+  );
+
+  // 24e: 500 ms freshness rule — if no frame was processed by detectVideoFrame in the last 500 ms, treat face as NOT DETECTED even if camera is ON
+  const freshAt490ms = resolveLiveFaceTrackingState({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    videoReady: true,
+    videoPausedOrEnded: false,
+    mode: 'WEBCAM',
+    faceMode: 'AUTO',
+    rawAutoDetected: true,
+    rawRollDeg: 2.1,
+    rawLandmarks: synthetic478,
+    lastProcessedFrameTimeMs: 1000,
+    nowMs: 1000 + FACE_DETECTION_FRESHNESS_TIMEOUT_MS - 10,
+  });
+
+  const staleAt505ms = resolveLiveFaceTrackingState({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    videoReady: true,
+    videoPausedOrEnded: false,
+    mode: 'WEBCAM',
+    faceMode: 'AUTO',
+    rawAutoDetected: true,
+    rawRollDeg: 2.1,
+    rawLandmarks: synthetic478,
+    lastProcessedFrameTimeMs: 1000,
+    nowMs: 1000 + FACE_DETECTION_FRESHNESS_TIMEOUT_MS + 5,
+  });
+
+  assert(
+    FACE_DETECTION_FRESHNESS_TIMEOUT_MS === 500 &&
+      freshAt490ms.autoDetected === true &&
+      staleAt505ms.autoDetected === false &&
+      staleAt505ms.rollDeg === 0 &&
+      staleAt505ms.landmarks.length === 0 &&
+      staleAt505ms.reason === 'STALE_FRAME_TIMEOUT',
+    '24e: 500 ms freshness rule treats face as NOT DETECTED when last detectVideoFrame is > 500 ms old even while camera is ON',
+    `fresh=${freshAt490ms.autoDetected}, stale=${staleAt505ms.autoDetected} (${staleAt505ms.reason})`
+  );
+}
+
+// -----------------------------------------------------------------------------
+// TEST 25: Live Scanner Layout, Viewport Clamping, Collapsed One-Line Summary & Fit/Fill Alignment
+// -----------------------------------------------------------------------------
+console.log('\nTest Group 25: Live Scanner Layout, Viewport Clamping, Collapsed Summary & Fit/Fill Alignment');
+{
+  // 25a: Floating panel position clamping inside viewport bounds
+  const clampedTopLeft = clampFloatingPanelPosition(
+    { x: -120, y: -45 },
+    { width: 360, height: 220 },
+    { width: 1280, height: 720 },
+    8
+  );
+  const clampedBottomRight = clampFloatingPanelPosition(
+    { x: 1500, y: 950 },
+    { width: 360, height: 220 },
+    { width: 1280, height: 720 },
+    8
+  );
+  const clampedInside = clampFloatingPanelPosition(
+    { x: 200, y: 150 },
+    { width: 360, height: 220 },
+    { width: 1280, height: 720 },
+    8
+  );
+
+  assert(
+    clampedTopLeft.x === 8 &&
+      clampedTopLeft.y === 8 &&
+      clampedBottomRight.x === 1280 - 360 - 8 &&
+      clampedBottomRight.y === 720 - 220 - 8 &&
+      clampedInside.x === 200 &&
+      clampedInside.y === 150,
+    '25a: Floating panel positions are strictly clamped inside the viewport boundaries on drag and window resize',
+    `topLeft=${JSON.stringify(clampedTopLeft)}, bottomRight=${JSON.stringify(clampedBottomRight)}`
+  );
+
+  // 25b: Collapsed one-line summary text for all combinations of face and marker status
+  const sumAutoDetected = formatCollapsedScannerSummary({
+    faceMode: 'AUTO',
+    autoDetected: true,
+    manualPlacedCount: 0,
+    maxillaCount: 2,
+    mandibleCount: 0,
+  });
+  const sumAutoNotDetected = formatCollapsedScannerSummary({
+    faceMode: 'AUTO',
+    autoDetected: false,
+    manualPlacedCount: 0,
+    maxillaCount: 0,
+    mandibleCount: 0,
+  });
+  const sumAutoAllMarkers = formatCollapsedScannerSummary({
+    faceMode: 'AUTO',
+    autoDetected: true,
+    manualPlacedCount: 0,
+    maxillaCount: 4,
+    mandibleCount: 4,
+  });
+  const sumManualPartial = formatCollapsedScannerSummary({
+    faceMode: 'MANUAL',
+    autoDetected: false,
+    manualPlacedCount: 5,
+    maxillaCount: 3,
+    mandibleCount: 1,
+  });
+
+  assert(
+    sumAutoDetected === 'FACE: DETECTED · MAX 2/4 · MAND 0/4' &&
+      sumAutoNotDetected === 'FACE: NOT DETECTED · MAX 0/4 · MAND 0/4' &&
+      sumAutoAllMarkers === 'FACE: DETECTED · MAX 4/4 · MAND 4/4' &&
+      sumManualPartial === 'FACE: MANUAL (5/9) · MAX 3/4 · MAND 1/4',
+    '25b: Collapsed one-line summary formats exact status string for all face (DETECTED / NOT DETECTED / MANUAL) and marker count combinations',
+    `got: "${sumAutoDetected}", "${sumAutoNotDetected}", "${sumManualPartial}"`
+  );
+
+  // 25c: Layout persistence and Reset Layout
+  const mockStoreMap = new Map<string, string>();
+  const mockStorage = {
+    getItem: (k: string) => mockStoreMap.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      mockStoreMap.set(k, v);
+    },
+    removeItem: (k: string) => {
+      mockStoreMap.delete(k);
+    },
+  };
+
+  saveScannerLayoutState(
+    {
+      ...DEFAULT_SCANNER_LAYOUT_STATE,
+      floatPanels: true,
+      videoFitMode: 'FILL',
+      facePanel: {
+        ...DEFAULT_SCANNER_LAYOUT_STATE.facePanel,
+        x: 310,
+        y: 120,
+        opacityPct: 65,
+      },
+    },
+    mockStorage
+  );
+  const loadedLayout = loadScannerLayoutState(mockStorage);
+  const resetLayout = resetScannerLayoutState(mockStorage);
+
+  assert(
+    loadedLayout.floatPanels === true &&
+      loadedLayout.videoFitMode === 'FILL' &&
+      loadedLayout.facePanel.x === 310 &&
+      loadedLayout.facePanel.opacityPct === 65 &&
+      resetLayout.floatPanels === false &&
+      resetLayout.hidePanels === false &&
+      resetLayout.videoFitMode === 'FIT' &&
+      resetLayout.facePanel.x === DEFAULT_SCANNER_LAYOUT_STATE.facePanel.x,
+    '25c: Layout state persists float position/opacity/fit mode and resets cleanly to default (Fit video, docked panels)',
+    `loaded=${JSON.stringify(loadedLayout.facePanel)}, reset=${JSON.stringify(resetLayout.facePanel)}`
+  );
+
+  // 25d: Fit (contain) vs Fill (cover) + mirrored front camera overlay alignment
+  const fitTfRear = computeContainTransform(1280, 720, 800, 800, false); // Fit inside square 800x800 -> scale=800/1280=0.625, drawW=800, drawH=450, drawY=175
+  const fitTfFront = computeViewportTransform(1280, 720, 800, 800, true, 'FIT');
+  const fillTfFront = computeViewportTransform(1280, 720, 800, 800, true, 'FILL');
+
+  const sampleVideoPt = { x: 320, y: 180 }; // Top-left quadrant of 1280x720 video
+  const canvasFitRear = mapVideoPointToCanvas(sampleVideoPt, fitTfRear);
+  const roundTripFitRear = mapCanvasPointToVideo(canvasFitRear, fitTfRear);
+
+  const canvasFitFront = mapVideoPointToCanvas(sampleVideoPt, fitTfFront);
+  const roundTripFitFront = mapCanvasPointToVideo(canvasFitFront, fitTfFront);
+
+  const canvasFillFront = mapVideoPointToCanvas(sampleVideoPt, fillTfFront);
+  const roundTripFillFront = mapCanvasPointToVideo(canvasFillFront, fillTfFront);
+
+  assert(
+    fitTfRear.drawW === 800 &&
+      fitTfRear.drawH === 450 &&
+      fitTfRear.drawY === 175 &&
+      Math.hypot(roundTripFitRear.x - sampleVideoPt.x, roundTripFitRear.y - sampleVideoPt.y) < 1e-4 &&
+      Math.hypot(roundTripFitFront.x - sampleVideoPt.x, roundTripFitFront.y - sampleVideoPt.y) < 1e-4 &&
+      Math.hypot(roundTripFillFront.x - sampleVideoPt.x, roundTripFillFront.y - sampleVideoPt.y) < 1e-4 &&
+      canvasFitFront.x === 800 - canvasFitRear.x,
+    '25d: Overlay coordinate transforms stay aligned with video in both Fit (contain) and Fill (cover) modes, including mirrored front camera',
+    `fitRear=(${canvasFitRear.x},${canvasFitRear.y}), fitFront=(${canvasFitFront.x},${canvasFitFront.y})`
+  );
+
+  // 25e: Consistent candidate square vs pre-quad small contour rejection text
+  const candText = formatCandidateRejectionSummary({
+    quads: 10,
+    rejectedBorder: 8,
+    rejectedDictionary: 0,
+    rejectedFlat: 2,
+    rejectedTooSmall: 72,
+  });
+
+  assert(
+    candText ===
+      'NO MARKER FOUND — Candidates: 10 (8 border / 0 pattern / 2 flat) · Contours too small: 72',
+    '25e: Marker candidate summary clearly separates quad candidates (8+0+2=10) from pre-quad contours rejected too small (72)',
+    `got: "${candText}"`
+  );
+}
+
+// -----------------------------------------------------------------------------
+// TEST 26: Automatic Camera & Distance Calibration (Zhang Planar Solver, Distance < 3% at 30 cm, IPD Assumed)
+// -----------------------------------------------------------------------------
+console.log('\nTest Group 26: Automatic Camera & Distance Calibration (Zhang Planar Solver & Live Distance)');
+{
+  // 26a: Synthetic 3x3 calibration card images (IDs 20-28, 60x60 mm, pitch 18 mm) with known focal length & distortion
+  const trueFx = 960.0;
+  const trueFy = 960.0;
+  const trueCx = 640.0;
+  const trueCy = 360.0;
+  const trueK1 = -0.04;
+  const trueK2 = 0.01;
+
+  const synthFrames = generateSyntheticCalibrationCardFrames({
+    fx: trueFx,
+    fy: trueFy,
+    cx: trueCx,
+    cy: trueCy,
+    k1: trueK1,
+    k2: trueK2,
+    frameCount: 12,
+    noiseStdPx: 0.12,
+  });
+
+  const zhangSolved = solveZhangPlanarCalibration(synthFrames, 1280, 720);
+  const fxRelError = Math.abs(zhangSolved.fx - trueFx) / trueFx;
+  const fyRelError = Math.abs(zhangSolved.fy - trueFy) / trueFy;
+
+  // Also verify that frames with < 6 markers are rejected by evaluateCalibrationCardFrame
+  const partialCardFrame = evaluateCalibrationCardFrame(
+    [
+      {
+        id: 20,
+        corners: [
+          { x: 100, y: 100 },
+          { x: 140, y: 100 },
+          { x: 140, y: 140 },
+          { x: 100, y: 140 },
+        ],
+      },
+      {
+        id: 21,
+        corners: [
+          { x: 160, y: 100 },
+          { x: 200, y: 100 },
+          { x: 200, y: 140 },
+          { x: 160, y: 140 },
+        ],
+      },
+    ],
+    0
+  );
+
+  assert(
+    partialCardFrame.accepted === false &&
+      synthFrames.every((f) => f.accepted && f.decodedMarkerIds.length === 9) &&
+      zhangSolved.acceptedFramesCount === 12 &&
+      fxRelError < 0.02 &&
+      fyRelError < 0.02 &&
+      zhangSolved.reprojectionRmsPx < 1.0 &&
+      zhangSolved.verdict === 'PASS' &&
+      zhangSolved.coveragePct > 15,
+    '26a: Zhang planar calibration on 12 synthetic 3x3 ArUco card frames solves focal length within < 2% error and RMS < 1.0 px (PASS)',
+    `trueFx=${trueFx}, solvedFx=${zhangSolved.fx} (err=${(fxRelError * 100).toFixed(2)}%), rms=${zhangSolved.reprojectionRmsPx}px, verdict=${zhangSolved.verdict}`
+  );
+
+  // 26b: Live marker distance calculation from 6.5 mm rim marker at Z = 30.0 cm (300 mm) has < 3% error
+  const testZMm = 300.0; // 30.0 cm
+  const rimSideMm = 6.5;
+  const projectedSidePx = (zhangSolved.fx * rimSideMm) / testZMm; // ~20.8 px at 30 cm
+  const halfPx = projectedSidePx * 0.5;
+  const synthRimMarkerAt30Cm = {
+    id: 3, // Maxillary rim marker
+    corners: [
+      { x: 640 - halfPx, y: 360 - halfPx, z: 0 },
+      { x: 640 + halfPx, y: 360 - halfPx, z: 0 },
+      { x: 640 + halfPx, y: 360 + halfPx, z: 0 },
+      { x: 640 - halfPx, y: 360 + halfPx, z: 0 },
+    ] as [Point3D, Point3D, Point3D, Point3D],
+  };
+
+  const calSettingsForDist = {
+    ...DEFAULT_CAMERA_CALIBRATION,
+    fx: zhangSolved.fx,
+    fy: zhangSolved.fy,
+    cx: zhangSolved.cx,
+    cy: zhangSolved.cy,
+    k1: 0,
+    k2: 0,
+    scaleFactor: 1.0,
+    isCalibrated: true,
+  };
+
+  const liveDist30 = computeLiveMarkerDistance([synthRimMarkerAt30Cm], calSettingsForDist, 1280, 720);
+  const distRelErrAt30Cm =
+    liveDist30.distanceCm !== null ? Math.abs(liveDist30.distanceCm - 30.0) / 30.0 : 1.0;
+
+  assert(
+    liveDist30.markerDistanceAvailable === true &&
+      liveDist30.distanceCm !== null &&
+      distRelErrAt30Cm < 0.03 &&
+      liveDist30.uncertaintyCm !== null &&
+      liveDist30.scaleSource === 'RIM_MARKER' &&
+      liveDist30.scaleSourceLabel === 'scale: rim marker',
+    '26b: Live marker distance at 30.0 cm achieves < 3% error, reports live uncertainty, and sets active source to "scale: rim marker"',
+    `distCm=${liveDist30.distanceCm} (err=${(distRelErrAt30Cm * 100).toFixed(2)}%), uncertainty=${liveDist30.uncertaintyCm}, source=${liveDist30.scaleSourceLabel}`
+  );
+
+  // 26c: IPD fallback is explicitly labelled "IPD: assumed 63 mm (not measured)" until user enters a measured IPD, and reports "scale: IPD, lower confidence" when no marker is visible
+  const defaultIpdStatus = formatIpdStatusText(DEFAULT_CAMERA_CALIBRATION);
+  const measuredIpdStatus = formatIpdStatusText({
+    ...DEFAULT_CAMERA_CALIBRATION,
+    patientIpdMm: 64.5,
+    ipdIsMeasured: true,
+  });
+  const noMarkerScaleInfo = computeLiveMarkerDistance([], calSettingsForDist, 1280, 720);
+
+  assert(
+    defaultIpdStatus.isAssumed === true &&
+      defaultIpdStatus.text === 'IPD: assumed 63 mm (not measured)' &&
+      measuredIpdStatus.isAssumed === false &&
+      measuredIpdStatus.text === 'IPD: measured 64.5 mm' &&
+      noMarkerScaleInfo.scaleSource === 'IPD_FALLBACK' &&
+      noMarkerScaleInfo.scaleSourceLabel === 'scale: IPD, lower confidence',
+    '26c: Unmeasured IPD displays "IPD: assumed 63 mm (not measured)" and no-marker scale fallback displays "scale: IPD, lower confidence"',
+    `defaultIpd="${defaultIpdStatus.text}", measuredIpd="${measuredIpdStatus.text}", noMarkerScale="${noMarkerScaleInfo.scaleSourceLabel}"`
+  );
+
+  // 26d: Per-camera-label + resolution storage invalidates calibration when camera label or resolution changes
+  const calStoreMap = new Map<string, string>();
+  const calMockStorage = {
+    getItem: (k: string) => calStoreMap.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      calStoreMap.set(k, v);
+    },
+    removeItem: (k: string) => {
+      calStoreMap.delete(k);
+    },
+  };
+
+  const savedFor1080p = {
+    ...calSettingsForDist,
+    isCalibrated: true,
+    reprojectionRmsPx: 0.42,
+    cameraDeviceLabel: 'Logitech BRIO 4K',
+    calibratedResolution: { width: 1920, height: 1080 },
+  };
+  saveCameraCalibration(savedFor1080p, calMockStorage);
+
+  // Loading same camera + same resolution keeps isCalibrated = true
+  const reloadedSame = loadCameraCalibrationForDevice(
+    'Logitech BRIO 4K',
+    1920,
+    1080,
+    savedFor1080p,
+    calMockStorage
+  );
+  // Loading different resolution (1280x720) invalidates calibration
+  const reloadedDiffRes = loadCameraCalibrationForDevice(
+    'Logitech BRIO 4K',
+    1280,
+    720,
+    savedFor1080p,
+    calMockStorage
+  );
+  // Loading unknown device label marks HFOV estimated
+  const unknownTrack = detectCameraProfileFromTrack({
+    deviceLabel: '',
+    facingMode: '',
+    width: 1280,
+    height: 720,
+  });
+  const resetProf = resetCameraCalibrationToProfile(
+    'EXTERNAL_HD',
+    'Logitech BRIO 4K',
+    1920,
+    1080,
+    calMockStorage
+  );
+
+  assert(
+    reloadedSame.invalidated === false &&
+      reloadedSame.settings.isCalibrated === true &&
+      reloadedDiffRes.invalidated === true &&
+      reloadedDiffRes.settings.isCalibrated === false &&
+      unknownTrack.hfovEstimated === true &&
+      resetProf.isCalibrated === false &&
+      resetProf.hfovDeg === 75,
+    '26d: Calibration is stored per camera label + resolution, invalidated when resolution/camera changes, marks unknown track "HFOV estimated", and resets to profile',
+    `same=${reloadedSame.settings.isCalibrated}, diffRes=${reloadedDiffRes.settings.isCalibrated} (inv=${reloadedDiffRes.invalidated}), unknownEst=${unknownTrack.hfovEstimated}`
   );
 }
 

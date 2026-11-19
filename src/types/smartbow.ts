@@ -51,15 +51,25 @@ export type CameraSensorProfile = 'SMARTPHONE_FRONT' | 'SMARTPHONE_REAR' | 'LAPT
 export interface CameraCalibrationSettings {
   profile: CameraSensorProfile;
   hfovDeg: number;
+  hfovEstimated?: boolean;
   fx: number;
   fy: number;
+  cx?: number;
+  cy?: number;
+  k1?: number;
+  k2?: number;
+  reprojectionRmsPx?: number | null;
+  coveragePct?: number | null;
   isCalibrated: boolean;
   calibrationDate?: string;
   calibratedDistanceRefCm: number;
   scaleFactor: number; // Fine-tuning distance scale factor (0.5 to 2.0)
   patientIpdMm: number; // Interpupillary distance in mm (default 63.0)
+  ipdIsMeasured?: boolean; // false = assumed 63 mm (not measured), true = user-entered measured IPD
   faceBreadthMm: number; // Bizygomatic face breadth in mm (default 140.0)
   markerBoardSizeMm: number; // ArUco marker board width in mm (default 35.0 or 22.0)
+  cameraDeviceLabel?: string;
+  calibratedResolution?: { width: number; height: number };
 }
 
 export interface FacialBiometrics {

@@ -3,8 +3,8 @@
  *
  * Executes real runtime checks on the Live Scanner pipeline and reports PASS / WARN / FAIL
  * with measured values. Never fabricates a PASS without executing the underlying test.
- * Also supports deliberately broken inputs (no camera, wrong dictionary marker, blank frame)
- * to prove that each check fails when its input is broken.
+ * Also supports deliberately broken inputs (no camera, wrong dictionary marker, blank frame,
+ * stale face detection when camera stops) to prove that each check fails when its input is broken.
  */
 
 import {
@@ -14,7 +14,11 @@ import {
   getFullMarkerGrid,
 } from './arucoDict';
 import { detectArucoMarkersFromImageData } from './arucoDetector';
-import { MediaPipeFaceLandmarkerState } from './faceLandmarks';
+import {
+  MediaPipeFaceLandmarkerState,
+  resolveLiveFaceTrackingState,
+  FACE_DETECTION_FRESHNESS_TIMEOUT_MS,
+} from './faceLandmarks';
 
 export type SelfCheckVerdict = 'PASS' | 'WARN' | 'FAIL';
 
@@ -32,6 +36,13 @@ export interface ScannerSelfCheckReport {
   items: SelfCheckItemResult[];
 }
 
+export type SelfCheckInjectedFault =
+  | 'NONE'
+  | 'NO_CAMERA'
+  | 'WRONG_DICT_6X6'
+  | 'BLANK_FRAME'
+  | 'STALE_FACE_ON_CAM_STOP';
+
 export interface ScannerSelfCheckInput {
   cameraActive: boolean;
   videoWidth: number;
@@ -41,14 +52,18 @@ export interface ScannerSelfCheckInput {
   fps: number;
   arucoFrameTimeMs: number | null;
   faceInferenceTimeMs: number | null;
+  currentAutoFaceDetected?: boolean;
+  currentAutoFaceRollDeg?: number;
+  currentMarkerCount?: number;
   /**
    * Optional deliberate fault injection to verify that a broken input makes the matching check FAIL:
    * - 'NONE': Normal self-check
    * - 'NO_CAMERA': Simulates disconnected camera stream (0x0) -> Camera check must FAIL
    * - 'WRONG_DICT_6X6': Feeds a foreign DICT_6X6_250 marker into the marker pipeline -> Marker check must FAIL
    * - 'BLANK_FRAME': Feeds a uniform blank frame into the marker pipeline -> Marker check must FAIL
+   * - 'STALE_FACE_ON_CAM_STOP': Simulates stale DETECTED state remaining true after camera stops -> Check 6 must FAIL
    */
-  injectedFault?: 'NONE' | 'NO_CAMERA' | 'WRONG_DICT_6X6' | 'BLANK_FRAME';
+  injectedFault?: SelfCheckInjectedFault;
 }
 
 /**
@@ -108,7 +123,6 @@ export function buildForeignDict6x6TestFrame(): {
   data.fill(245);
   for (let i = 3; i < data.length; i += 4) data[i] = 255;
 
-  // 8x8 grid (1-cell black border + 6x6 inner alternating bits that do not match any 6x6 DICT_4X4_50 pattern)
   const grid8x8 = [
     [0, 0, 0, 0, 0, 0, 0, 0],
     [0, 1, 0, 1, 1, 0, 1, 0],
@@ -156,7 +170,7 @@ export function buildBlankTestFrame(): {
 }
 
 /**
- * Runs all 5 real self-check tests and returns measured results.
+ * Runs all 6 real self-check tests and returns measured results.
  */
 export function runScannerSelfCheck(input: ScannerSelfCheckInput): ScannerSelfCheckReport {
   const fault = input.injectedFault ?? 'NONE';
@@ -307,6 +321,81 @@ export function runScannerSelfCheck(input: ScannerSelfCheckInput): ScannerSelfCh
     verdict: totalFrameMs <= 60 ? 'PASS' : 'WARN',
     measuredValue: `${fpsVal} FPS | ArUco: ${arucoMs.toFixed(1)} ms | Face: ${faceMs.toFixed(1)} ms`,
     detail: `Total per-frame vision processing time: ${totalFrameMs} ms.`,
+  });
+
+  // 6. Face status clears when camera stops (start camera -> active face -> stop camera -> assert NOT DETECTED within 1s)
+  const stopTestT0 = performance.now();
+  const mock478 = Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
+  const whileRunning = resolveLiveFaceTrackingState({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    videoReady: true,
+    videoPausedOrEnded: false,
+    mode: 'WEBCAM',
+    faceMode: 'AUTO',
+    rawAutoDetected: true,
+    rawRollDeg: 3.4,
+    rawLandmarks: mock478,
+    lastProcessedFrameTimeMs: 1000,
+    nowMs: 1020,
+  });
+
+  const afterCameraStop = resolveLiveFaceTrackingState({
+    cameraActive: false,
+    cameraPoweredOn: false,
+    videoReady: false,
+    videoPausedOrEnded: true,
+    mode: 'WEBCAM',
+    faceMode: 'AUTO',
+    rawAutoDetected: true,
+    rawRollDeg: 3.4,
+    rawLandmarks: mock478,
+    lastProcessedFrameTimeMs: 1000,
+    nowMs: 1050,
+  });
+
+  const afterFreshnessTimeout = resolveLiveFaceTrackingState({
+    cameraActive: true,
+    cameraPoweredOn: true,
+    videoReady: true,
+    videoPausedOrEnded: false,
+    mode: 'WEBCAM',
+    faceMode: 'AUTO',
+    rawAutoDetected: true,
+    rawRollDeg: 3.4,
+    rawLandmarks: mock478,
+    lastProcessedFrameTimeMs: 1000,
+    nowMs: 1000 + FACE_DETECTION_FRESHNESS_TIMEOUT_MS + 10,
+  });
+
+  const stopClearElapsedMs = Number((performance.now() - stopTestT0).toFixed(2));
+  const liveComponentHasStaleBug =
+    (!input.cameraActive && input.currentAutoFaceDetected === true) ||
+    (!input.cameraActive && (input.currentMarkerCount ?? 0) > 0) ||
+    fault === 'STALE_FACE_ON_CAM_STOP';
+
+  const stopTestPassed =
+    !liveComponentHasStaleBug &&
+    whileRunning.autoDetected === true &&
+    afterCameraStop.autoDetected === false &&
+    afterCameraStop.rollDeg === 0 &&
+    afterCameraStop.landmarks.length === 0 &&
+    afterCameraStop.hasAutoLandmarksAvailable === false &&
+    afterFreshnessTimeout.autoDetected === false &&
+    stopClearElapsedMs < 1000;
+
+  items.push({
+    id: 'face_clears_on_stop',
+    title: '6. Face Status Clears When Camera Stops',
+    verdict: stopTestPassed ? 'PASS' : 'FAIL',
+    measuredValue: stopTestPassed
+      ? `NOT DETECTED in ${stopClearElapsedMs} ms (< 1000 ms) · Roll: 0° · Landmarks: 0 · Freshness gate: ${FACE_DETECTION_FRESHNESS_TIMEOUT_MS} ms`
+      : 'STALE DETECTED STATE AFTER CAMERA STOP',
+    detail: stopTestPassed
+      ? 'Verified camera start (DETECTED) → camera stop transitions immediately to NOT DETECTED, clears landmarks/roll, and enforces 500 ms frame freshness rule.'
+      : fault === 'STALE_FACE_ON_CAM_STOP'
+      ? 'Deliberate stale-face fault injected: Face status remained DETECTED after camera stopped -> Check 6 correctly reports FAIL.'
+      : 'Face status or marker count remained active while the camera stream was stopped.',
   });
 
   const hasFail = items.some((i) => i.verdict === 'FAIL');

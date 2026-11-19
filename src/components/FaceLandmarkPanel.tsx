@@ -4,6 +4,9 @@
  * Provides the unified Face Tracking & Manual Landmark Placement control panel on the Live Scanner:
  * - Mode switch: AUTO (MediaPipe FaceLandmarker) / MANUAL (9-point interactive placement)
  * - Always-available "Place landmarks manually" action
+ * - Separate model delegate line: "Model: MediaPipe GPU/CPU (loaded)" so the model's delegate
+ *   can never be mistaken for an active face detection.
+ * - "Canonical landmarks active" and Roll value only render when autoDetected === true (shows "Roll: —" otherwise).
  * - 3-second auto-detection timeout prompt:
  *   "Face not found — try better light, or place landmarks manually."
  * - Manual workflow controls: next-point prompt, "Use auto points as starting positions",
@@ -89,33 +92,10 @@ export const FaceLandmarkPanel: React.FC<FaceLandmarkPanelProps> = ({
               MANUAL ({placedCount}/9 POINTS)
             </span>
           )}
-
-          {/* MediaPipe Model Load Badge */}
-          {faceMode === 'AUTO' && (
-            <span
-              className={`px-1.5 py-0.5 rounded text-[10px] border flex items-center gap-1 ${
-                modelState.status === 'READY'
-                  ? 'bg-slate-900 border-slate-700 text-slate-300'
-                  : modelState.status === 'LOADING'
-                  ? 'bg-cyan-950/60 border-cyan-700 text-cyan-300'
-                  : 'bg-rose-950/70 border-rose-700 text-rose-300'
-              }`}
-              title={modelState.errorMessage || 'MediaPipe FaceLandmarker Status'}
-            >
-              <Cpu className="w-3 h-3" />
-              <span>
-                {modelState.status === 'READY'
-                  ? `MediaPipe (${modelState.delegate})`
-                  : modelState.status === 'LOADING'
-                  ? 'Loading MediaPipe...'
-                  : 'MediaPipe Failed'}
-              </span>
-            </span>
-          )}
         </div>
 
         {/* Mode Switch: AUTO / MANUAL + "Place landmarks manually" button */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-800">
             <button
               onClick={() => onChangeFaceMode('AUTO')}
@@ -149,6 +129,25 @@ export const FaceLandmarkPanel: React.FC<FaceLandmarkPanelProps> = ({
             </button>
           )}
         </div>
+      </div>
+
+      {/* Row 2: Separate Model Delegate Status Line (never combined with detection status) */}
+      <div className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-slate-900/70 border border-slate-800/80 text-[10px]">
+        <div className="flex items-center gap-1.5 text-slate-300">
+          <Cpu className="w-3 h-3 text-slate-400 shrink-0" />
+          <span>
+            {modelState.status === 'READY'
+              ? `Model: MediaPipe ${modelState.delegate || 'CPU'} (loaded)`
+              : modelState.status === 'LOADING'
+              ? 'Model: MediaPipe (loading...)'
+              : 'Model: MediaPipe (failed)'}
+          </span>
+        </div>
+        {faceMode === 'AUTO' && (
+          <span className="text-slate-400">
+            Roll: <span className={autoDetected ? 'text-cyan-300 font-bold' : 'text-slate-500'}>{autoDetected ? `${autoRollDeg.toFixed(1)}°` : '—'}</span>
+          </span>
+        )}
       </div>
 
       {/* MediaPipe Failure Error Banner (if model failed to load) */}
@@ -193,11 +192,11 @@ export const FaceLandmarkPanel: React.FC<FaceLandmarkPanelProps> = ({
         </div>
       )}
 
-      {/* Auto Detected Summary */}
+      {/* Auto Detected Summary — ONLY rendered when autoDetected is true */}
       {faceMode === 'AUTO' && autoDetected && (
         <div className="flex items-center justify-between text-[11px] text-slate-300 bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-800">
           <div className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
             <span>
               Canonical landmarks active (#468/#473 Iris, #9 Glabella, #168 Nasion, #1/#2 Nose/Sn, #152 Chin, #61/#291 Mouth, #234/#454 Edges)
             </span>
@@ -210,7 +209,7 @@ export const FaceLandmarkPanel: React.FC<FaceLandmarkPanelProps> = ({
       {faceMode === 'MANUAL' && (
         <div className="space-y-2 pt-1 border-t border-slate-800">
           {/* Next Point Prompt */}
-          <div className="flex items-center justify-between gap-2 bg-slate-900 px-2.5 py-1.5 rounded-lg border border-cyan-500/40">
+          <div className="flex items-center justify-between gap-2 flex-wrap bg-slate-900 px-2.5 py-1.5 rounded-lg border border-cyan-500/40">
             <div className="flex items-center gap-2">
               <Crosshair className="w-4 h-4 text-cyan-400 shrink-0" />
               {nextDef ? (
@@ -234,7 +233,7 @@ export const FaceLandmarkPanel: React.FC<FaceLandmarkPanelProps> = ({
               )}
             </div>
 
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-1 shrink-0 flex-wrap">
               <button
                 onClick={onCopyAutoPointsToManual}
                 disabled={!hasAutoLandmarksAvailable}
